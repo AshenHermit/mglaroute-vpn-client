@@ -1,0 +1,8 @@
+node_modules/
+dist/
+target/
+.worktrees/
+.superpowers/
+apps/desktop/src-tauri/binaries/
+*.log
+.DS_Store
