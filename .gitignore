@@ -4,5 +4,10 @@ target/
 .worktrees/
 .superpowers/
 apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/gen/schemas/
+.nx/
+coverage/
+.env*
+!.env.example
 *.log
 .DS_Store
