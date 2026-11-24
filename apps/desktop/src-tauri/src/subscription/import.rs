@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, Error, Result};
@@ -43,9 +43,12 @@ pub fn import_subscription_text(
     let now = Utc::now();
 
     // Include absent rows so a link that disappears and returns is "updated".
-    let mut stmt = conn.prepare("SELECT server_id FROM profiles WHERE subscription_id = ?1")?;
-    let existing: HashSet<String> = stmt
-        .query_map(params![sub_id], |row| row.get(0))?
+    // Keep each stored rank: upsert_many writes sort_index, so a re-import must
+    // feed the existing value back or auto-sort-by-delay order is wiped.
+    let mut stmt =
+        conn.prepare("SELECT server_id, sort_index FROM profiles WHERE subscription_id = ?1")?;
+    let existing: HashMap<String, i64> = stmt
+        .query_map(params![sub_id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<_>>()?;
     drop(stmt);
 
@@ -56,7 +59,8 @@ pub fn import_subscription_text(
     for parsed in &decoded.profiles {
         let sid = server_id(&parsed.link);
         feed_ids.insert(sid.clone());
-        if existing.contains(&sid) {
+        let previous_sort_index = existing.get(&sid).copied();
+        if previous_sort_index.is_some() {
             updated += 1;
         } else {
             added += 1;
@@ -75,7 +79,7 @@ pub fn import_subscription_text(
             latency_ms: None,
             reachable: false,
             checked_at: None,
-            sort_index: 0,
+            sort_index: previous_sort_index.unwrap_or(0),
             created_at: now,
             updated_at: now,
         });
@@ -83,7 +87,11 @@ pub fn import_subscription_text(
 
     profile_repo::upsert_many(conn, &profiles)?;
 
-    let absent_ids: Vec<String> = existing.difference(&feed_ids).cloned().collect();
+    let absent_ids: Vec<String> = existing
+        .keys()
+        .filter(|sid| !feed_ids.contains(*sid))
+        .cloned()
+        .collect();
     profile_repo::mark_absent(conn, sub_id, &absent_ids)?;
 
     let mut subscription = subscription_repo::get(conn, sub_id)?
@@ -167,6 +175,29 @@ mod tests {
         assert!(profiles[0].reachable);
         assert_eq!(profiles[0].checked_at, Some(checked_at));
         assert_eq!(profiles[0].raw_config, "{\"security\":\"tls\"}");
+    }
+
+    #[test]
+    fn upsert_existing_preserves_sort_index() {
+        let mut conn = test_conn();
+        let link = vless_link("One");
+        let sid = server_id(&link);
+        let profile = Profile {
+            id: format!("sub-1-{sid}"),
+            subscription_id: "sub-1".to_string(),
+            server_id: sid,
+            link: link.clone(),
+            raw_config: "{}".to_string(),
+            sort_index: 70,
+            ..Default::default()
+        };
+        profile_repo::upsert_many(&conn, &[profile]).expect("insert profile");
+
+        import_subscription_text(&mut conn, "sub-1", &link).expect("import");
+
+        let profiles = profile_repo::list_present(&conn).expect("list profiles");
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].sort_index, 70);
     }
 
     #[test]
