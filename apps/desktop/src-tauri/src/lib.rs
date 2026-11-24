@@ -1,4 +1,5 @@
 pub mod core;
+pub mod platform;
 pub mod probe;
 pub mod reconnect;
 pub mod service_profiles;
