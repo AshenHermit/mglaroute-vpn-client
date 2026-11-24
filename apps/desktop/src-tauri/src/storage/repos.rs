@@ -343,6 +343,14 @@ pub mod service_profile_repo {
         .optional()
     }
 
+    pub fn exists_by_name(conn: &Connection, name: &str) -> Result<bool> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_profiles WHERE name = ?1)",
+            params![name],
+            |row| row.get::<_, bool>(0),
+        )
+    }
+
     pub fn list(conn: &Connection) -> Result<Vec<ServiceProfile>> {
         let mut stmt = conn.prepare("SELECT * FROM service_profiles ORDER BY name, id")?;
         let rows = stmt.query_map([], service_profile_from_row)?;

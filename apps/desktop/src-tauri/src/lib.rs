@@ -1,3 +1,4 @@
+pub mod service_profiles;
 pub mod storage;
 pub mod subscription;
 
