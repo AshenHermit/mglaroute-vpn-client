@@ -76,6 +76,40 @@ pub fn load_previous(path: &Path) -> Result<PreviousProxy> {
     Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
 }
 
+/// One-shot gate for capturing the user's original proxy state.
+#[derive(Debug, Default)]
+pub struct CaptureGate {
+    captured: std::sync::Mutex<bool>,
+}
+
+impl CaptureGate {
+    /// Run `capture` at most once and return its value. `None` means a prior
+    /// call already captured. The lock is held across `capture`, so the flag
+    /// flips before any registry write and a failed `apply` cannot trigger a
+    /// second capture from partially-modified settings. A failure inside
+    /// `capture` itself leaves the gate open (no OS state was touched).
+    pub fn capture_once<T>(&self, capture: impl FnOnce() -> Result<T>) -> Result<Option<T>> {
+        let mut captured = self
+            .captured
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *captured {
+            return Ok(None);
+        }
+        let value = capture()?;
+        *captured = true;
+        Ok(Some(value))
+    }
+
+    /// Re-arm the gate after a successful restore.
+    pub fn reset(&self) {
+        *self
+            .captured
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
+    }
+}
+
 /// Test double with observable state; no OS interaction.
 #[derive(Debug)]
 pub struct InMemoryProxy {
@@ -161,6 +195,40 @@ mod tests {
         assert_eq!(loaded, previous);
         fresh.restore(&loaded).expect("restore");
         assert_eq!(fresh.state(), previous);
+    }
+
+    #[test]
+    fn capture_gate_survives_failed_apply() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let gate = CaptureGate::default();
+        let calls = AtomicUsize::new(0);
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+
+        // First apply: capture succeeds, then the registry write fails.
+        let first = gate
+            .capture_once(|| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(original.clone())
+            })
+            .expect("capture");
+        assert_eq!(first, Some(original.clone()));
+        let apply_failed: Result<()> = Err(ProxyError::Unsupported);
+        assert!(apply_failed.is_err(), "simulated set_proxy failure");
+
+        // Retry after the failed apply must not re-capture from the
+        // now-partially-modified registry.
+        let second = gate
+            .capture_once(|| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(PreviousProxy::Direct)
+            })
+            .expect("capture");
+        assert!(second.is_none(), "second capture must be suppressed");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "capture closure ran twice");
     }
 
     #[test]

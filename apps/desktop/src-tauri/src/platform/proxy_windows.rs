@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use super::proxy::{
-    override_string, persist_previous, proxy_string, PreviousProxy, ProxyBackend, ProxyError,
-    Result,
+    override_string, persist_previous, proxy_string, CaptureGate, PreviousProxy, ProxyBackend,
+    ProxyError, Result,
 };
 
 const INTERNET_SETTINGS: &str =
@@ -32,6 +32,8 @@ const VALUE_AUTO_CONFIG: &str = "AutoConfigURL";
 /// `apply` writes the current settings there, `restore` removes it on success.
 pub struct WindowsProxy {
     state_file: Option<PathBuf>,
+    /// Suppresses re-capture even when the first `apply` fails midway.
+    capture: CaptureGate,
     connected: Mutex<bool>,
 }
 
@@ -40,6 +42,7 @@ impl WindowsProxy {
     pub fn new() -> Self {
         Self {
             state_file: None,
+            capture: CaptureGate::default(),
             connected: Mutex::new(false),
         }
     }
@@ -48,6 +51,7 @@ impl WindowsProxy {
     pub fn with_state_file(path: impl Into<PathBuf>) -> Self {
         Self {
             state_file: Some(path.into()),
+            capture: CaptureGate::default(),
             connected: Mutex::new(false),
         }
     }
@@ -81,10 +85,15 @@ impl ProxyBackend for WindowsProxy {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !*connected {
                 if let Some(path) = &self.state_file {
-                    // Capture once, before touching the registry. While
-                    // connected this file is never rewritten.
-                    let previous = read_current()?;
-                    persist_previous(path, &previous)?;
+                    // Capture exactly once. `capture_once` flips its flag as
+                    // soon as persistence succeeds and before any registry
+                    // write, so a failed `set_proxy`/`refresh` cannot make a
+                    // retry capture our own partially-applied settings.
+                    self.capture.capture_once(|| {
+                        let previous = read_current()?;
+                        persist_previous(path, &previous)?;
+                        Ok(previous)
+                    })?;
                 }
             }
 
@@ -116,10 +125,14 @@ impl ProxyBackend for WindowsProxy {
                     Err(error) => return Err(error.into()),
                 }
             }
-            *self
+            // Re-arm only after the previous state is fully written and the
+            // disk snapshot is gone; a failed restore keeps the capture.
+            let mut connected = self
                 .connected
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *connected = false;
+            self.capture.reset();
             Ok(())
         }
         #[cfg(not(windows))]
