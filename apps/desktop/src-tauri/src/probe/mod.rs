@@ -1,7 +1,11 @@
+pub mod cycle;
 pub mod delay;
+pub mod scheduler;
 pub mod service_check;
 
+pub use cycle::{run_probe_cycle, ProbeOutcome};
 pub use delay::measure_delay;
+pub use scheduler::should_refetch;
 pub use service_check::check_service_profile;
 
 #[cfg(test)]
