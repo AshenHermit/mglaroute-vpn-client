@@ -1,5 +1,6 @@
 pub mod core;
 pub mod probe;
+pub mod reconnect;
 pub mod service_profiles;
 pub mod state;
 pub mod storage;
