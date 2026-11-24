@@ -71,7 +71,10 @@ fn normalize_base64(input: &str) -> String {
     normalized
 }
 
-fn decode_base64(input: &str) -> Option<String> {
+/// Shared base64 helper (standard and URL-safe, padded or not). Reused by the
+/// config builder to recover ss credentials that are deliberately absent from
+/// `raw_config`.
+pub(crate) fn decode_base64(input: &str) -> Option<String> {
     let normalized = normalize_base64(input);
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(normalized.as_bytes())
