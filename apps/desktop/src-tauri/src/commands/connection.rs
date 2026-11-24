@@ -22,7 +22,7 @@ pub(crate) async fn connect_impl(
         let conn = state.inner.conn.lock().await;
         let settings = settings_repo::get(&conn)?;
         let profile = match profile_id {
-            Some(id) => profile_repo::list_present(&conn)?
+            Some(id) => profile_repo::list_present_enabled(&conn)?
                 .into_iter()
                 .find(|profile| profile.id == id),
             None => best_eligible_profile(&conn)?,

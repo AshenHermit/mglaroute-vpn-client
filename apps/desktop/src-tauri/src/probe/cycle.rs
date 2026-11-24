@@ -98,7 +98,7 @@ pub async fn run_probe_cycle_with(
     transport: &dyn ProbeTransport,
     progress: &dyn ProbeProgress,
 ) -> Result<ProbeOutcome> {
-    let profiles = profile_repo::list_present(conn)?;
+    let profiles = profile_repo::list_present_enabled(conn)?;
     let services = service_profile_repo::list_enabled(conn)?;
     let total = profiles.len();
 

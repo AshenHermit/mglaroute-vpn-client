@@ -87,6 +87,12 @@ impl ChildGuard {
         Self { child }
     }
 
+    /// Non-blocking exit check for the watcher task. `Ok(None)` means the
+    /// child is still running; `Ok(Some(_))` means it exited.
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
     /// Kill then wait. Both results are collected so a child that already
     /// exited is still reaped instead of being left as a zombie.
     pub fn stop(&mut self) -> Result<()> {

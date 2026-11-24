@@ -61,7 +61,7 @@ impl From<Profile> for ProfilePayload {
 /// A candidate needs a positive delay and a reachable result for every active
 /// service profile. An empty active set means delay alone decides.
 pub fn candidates(conn: &Connection) -> rusqlite::Result<Vec<(String, u64, bool)>> {
-    let profiles = profile_repo::list_present(conn)?;
+    let profiles = profile_repo::list_present_enabled(conn)?;
     let services = service_profile_repo::list_enabled(conn)?;
     let results = profile_repo::list_service_results(conn)?;
     let active: HashSet<&str> = services.iter().map(|service| service.id.as_str()).collect();
@@ -98,7 +98,7 @@ pub fn best_eligible_profile(conn: &Connection) -> rusqlite::Result<Option<Profi
         .map(|(id, _, _)| id)
         .collect();
 
-    Ok(profile_repo::list_present(conn)?
+    Ok(profile_repo::list_present_enabled(conn)?
         .into_iter()
         .filter(|profile| passing.contains(&profile.id))
         .min_by(|left, right| {

@@ -68,7 +68,8 @@ pub fn run() {
             app.manage(state.clone());
             state::set_app_handle(app.handle().clone());
             handle.spawn(commands::refetch_loop(state.clone()));
-            handle.spawn(commands::auto_test_loop(state));
+            handle.spawn(commands::auto_test_loop(state.clone()));
+            handle.spawn(commands::child_exit_watch(state));
             Ok(())
         })
         .invoke_handler(invoke_handler())

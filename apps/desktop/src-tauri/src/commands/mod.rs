@@ -19,7 +19,9 @@ use crate::platform::proxy::{load_previous, PreviousProxy, ProxyBackend};
 use crate::platform::proxy_windows::WindowsProxy;
 use crate::probe::scheduler::should_refetch;
 use crate::service_profiles::ensure_defaults_on_empty;
-use crate::state::{emit, MutationError, MutationGuard, MutationPermit};
+#[cfg(not(test))]
+use crate::state::emit;
+use crate::state::{MutationError, MutationGuard, MutationPermit};
 use crate::storage::migrate;
 use crate::storage::models::Settings;
 use crate::storage::repos::{settings_repo, subscription_repo};
@@ -110,6 +112,8 @@ pub struct ConnectionStatePayload {
 /// Owns the spawned core. Production wraps `ChildGuard`; tests inject a fake.
 pub trait CoreHandle: Send {
     fn stop(&mut self) -> std::result::Result<(), String>;
+    /// `true` once the core has exited; never blocks.
+    fn try_wait(&mut self) -> std::result::Result<bool, String>;
 }
 
 pub trait CoreLauncher: Send + Sync {
@@ -121,6 +125,13 @@ struct XrayCoreHandle(ChildGuard);
 impl CoreHandle for XrayCoreHandle {
     fn stop(&mut self) -> std::result::Result<(), String> {
         self.0.stop().map_err(|_| "failed to stop core".to_string())
+    }
+
+    fn try_wait(&mut self) -> std::result::Result<bool, String> {
+        self.0
+            .try_wait()
+            .map(|status| status.is_some())
+            .map_err(|_| "failed to poll core".to_string())
     }
 }
 
@@ -224,13 +235,77 @@ fn exclusions(settings: &Settings) -> Vec<String> {
 }
 
 pub(crate) fn emit_connection(state: &ConnectionStatePayload) {
-    emit("connection-state", state.clone());
+    // `tauri::Emitter` drags the WebView2 GUI import table into unit-test
+    // binaries; on hosts with a stale loader DLL that aborts before `main`.
+    #[cfg(not(test))]
+    {
+        emit("connection-state", state.clone());
+    }
+    #[cfg(test)]
+    let _ = state;
 }
 
 async fn mark_faulted(state: &AppState) {
     let mut runtime = state.inner.runtime.lock().await;
     runtime.connection.status = ConnectionStatus::Faulted;
     emit_connection(&runtime.connection);
+}
+
+/// Caller holds the mutation permit. When the connected core has exited,
+/// restore the captured proxy, drop the temp config and report `Faulted`.
+/// No restart is attempted — the operator reconnects explicitly.
+pub(crate) async fn handle_exited_child(
+    state: &AppState,
+) -> std::result::Result<bool, CommandError> {
+    let (child, previous, config_path, profile_id) = {
+        let mut runtime = state.inner.runtime.lock().await;
+        if runtime.connection.status != ConnectionStatus::Connected {
+            return Ok(false);
+        }
+        let exited = match runtime.child.as_mut() {
+            Some(handle) => handle.try_wait().map_err(|_| CommandError::Core)?,
+            None => return Ok(false),
+        };
+        if !exited {
+            return Ok(false);
+        }
+        (
+            runtime.child.take(),
+            runtime.previous.take(),
+            runtime.config_path.take(),
+            runtime.connection.profile_id.clone(),
+        )
+    };
+
+    // The process already exited; dropping the handle just frees the slot.
+    drop(child);
+    if let Some(previous) = previous {
+        let runtime = state.inner.runtime.lock().await;
+        let _ = runtime.proxy.restore(&previous);
+    }
+    remove_config(&config_path);
+
+    let mut runtime = state.inner.runtime.lock().await;
+    runtime.connection = ConnectionStatePayload {
+        status: ConnectionStatus::Faulted,
+        profile_id,
+        proxy_port: None,
+    };
+    emit_connection(&runtime.connection);
+    Ok(true)
+}
+
+/// Polls the connected core every 500 ms. Shares the command mutation guard,
+/// so it cannot race connect/disconnect or the scheduler loops.
+pub async fn child_exit_watch(state: AppState) {
+    let mut ticker = tokio::time::interval(Duration::from_millis(500));
+    ticker.tick().await;
+    loop {
+        ticker.tick().await;
+        if let Ok(_permit) = state.permit() {
+            let _ = handle_exited_child(&state).await;
+        }
+    }
 }
 
 fn stop_child(child: &mut Option<Box<dyn CoreHandle>>) -> bool {
@@ -314,9 +389,34 @@ mod tests {
 
     use super::*;
     use crate::anti_dpi;
+    use crate::commands::probe::candidates;
+    use crate::platform::proxy::InMemoryProxy;
     use crate::{invoke_handler, COMMAND_NAMES};
     use crate::storage::models::{Profile, ServiceProfile, Subscription};
     use crate::storage::repos::{profile_repo, service_profile_repo};
+
+    struct FakeLauncher;
+
+    impl CoreLauncher for FakeLauncher {
+        fn launch(
+            &self,
+            _snapshot: &ConfigSnapshot,
+        ) -> std::result::Result<Box<dyn CoreHandle>, String> {
+            Ok(Box::new(FakeHandle))
+        }
+    }
+
+    struct FakeHandle;
+
+    impl CoreHandle for FakeHandle {
+        fn stop(&mut self) -> std::result::Result<(), String> {
+            Ok(())
+        }
+
+        fn try_wait(&mut self) -> std::result::Result<bool, String> {
+            Ok(true)
+        }
+    }
 
     fn seeded_conn() -> Connection {
         let conn = Connection::open_in_memory().expect("open in-memory db");
@@ -428,5 +528,108 @@ mod tests {
                 "subscription_update",
             ]
         );
+    }
+
+    #[test]
+    fn disabled_subscription_profiles_excluded() {
+        let conn = seeded_conn();
+        subscription_repo::insert(
+            &conn,
+            &Subscription {
+                id: "sub-disabled".to_string(),
+                name: "disabled".to_string(),
+                url: "https://example.test/disabled".to_string(),
+                enabled: false,
+                ..Default::default()
+            },
+        )
+        .expect("insert disabled subscription");
+        profile_repo::upsert_many(
+            &conn,
+            &[Profile {
+                id: "p-disabled".to_string(),
+                subscription_id: "sub-disabled".to_string(),
+                server_id: "p-disabled".to_string(),
+                link: "vless://uuid@node.example.com:443#disabled".to_string(),
+                latency_ms: Some(1),
+                ..Default::default()
+            }],
+        )
+        .expect("insert disabled profile");
+        profile_repo::upsert_service_result(
+            &conn,
+            "p-disabled",
+            "svc-active",
+            true,
+            chrono::Utc::now(),
+        )
+        .expect("insert service result");
+
+        let ids: Vec<String> = candidates(&conn)
+            .expect("candidates")
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert!(
+            !ids.contains(&"p-disabled".to_string()),
+            "disabled subscription must not enter probe/connect candidates"
+        );
+
+        // p-disabled is faster (1 ms) but must never win over the enabled p-fast.
+        let chosen = best_eligible_profile(&conn)
+            .expect("select best eligible")
+            .expect("a passing profile exists");
+        assert_eq!(chosen.id, "p-fast");
+    }
+
+    #[tokio::test]
+    async fn child_exit_sets_faulted_and_restores_proxy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        migrate(&conn).expect("migrate");
+
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(InMemoryProxy::new(original.clone())),
+            Box::new(FakeLauncher),
+        );
+        let config_path = dir.path().join("xray-p-1-10808.json");
+        std::fs::write(&config_path, "{}").expect("write temp config");
+        {
+            let mut runtime = state.inner.runtime.lock().await;
+            runtime.proxy.apply(10808, &[]).expect("apply proxy");
+            runtime.child = Some(Box::new(FakeHandle));
+            runtime.previous = Some(original.clone());
+            runtime.config_path = Some(config_path.clone());
+            runtime.connection = ConnectionStatePayload {
+                status: ConnectionStatus::Connected,
+                profile_id: Some("p-1".to_string()),
+                proxy_port: Some(10808),
+            };
+        }
+        {
+            let runtime = state.inner.runtime.lock().await;
+            assert_ne!(runtime.proxy.current().expect("current proxy"), original);
+        }
+
+        let _permit = state.permit().expect("permit");
+        assert!(
+            handle_exited_child(&state)
+                .await
+                .expect("child exit transition")
+        );
+
+        let runtime = state.inner.runtime.lock().await;
+        assert_eq!(runtime.connection.status, ConnectionStatus::Faulted);
+        assert!(runtime.child.is_none());
+        assert!(runtime.previous.is_none());
+        assert!(runtime.config_path.is_none());
+        assert_eq!(runtime.proxy.current().expect("restored proxy"), original);
+        assert!(!config_path.exists());
     }
 }

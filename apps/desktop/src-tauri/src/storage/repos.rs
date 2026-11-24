@@ -231,6 +231,20 @@ pub mod profile_repo {
         rows.collect()
     }
 
+    /// Present profiles whose subscription is enabled. Probe selection and
+    /// auto-connect must never use servers from a disabled subscription;
+    /// import and UI paths keep `list_present` to see every stored profile.
+    pub fn list_present_enabled(conn: &Connection) -> Result<Vec<Profile>> {
+        let mut stmt = conn.prepare(
+            "SELECT p.* FROM profiles p \
+             JOIN subscriptions s ON s.id = p.subscription_id \
+             WHERE p.present = 1 AND s.enabled = 1 \
+             ORDER BY p.sort_index, p.id",
+        )?;
+        let rows = stmt.query_map([], profile_from_row)?;
+        rows.collect()
+    }
+
     /// Mark the given server IDs as absent for a subscription.
     pub fn mark_absent(
         conn: &Connection,
