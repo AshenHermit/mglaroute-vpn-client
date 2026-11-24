@@ -4,15 +4,8 @@ import { z } from "zod";
 // Timestamps are ISO-8601 strings from chrono's serde implementation.
 const timestamp = z.string();
 
-// DB stores test_urls as JSON text; command layer may emit either that text or the decoded list.
-const testUrls = z.preprocess((value) => {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}, z.array(z.string()));
+// Command layer decodes the DB's JSON text and always emits a canonical list.
+const testUrls = z.array(z.string());
 
 export const SubscriptionSchema = z.object({
   id: z.string(),

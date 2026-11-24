@@ -76,6 +76,10 @@ impl Default for WindowsProxy {
 }
 
 impl ProxyBackend for WindowsProxy {
+    fn current(&self) -> Result<PreviousProxy> {
+        WindowsProxy::current(self)
+    }
+
     fn apply(&self, port: u16, exclusions: &[String]) -> Result<()> {
         #[cfg(windows)]
         {

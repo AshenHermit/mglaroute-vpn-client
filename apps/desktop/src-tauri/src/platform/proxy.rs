@@ -37,6 +37,9 @@ pub enum PreviousProxy {
 /// Applies and restores a system proxy. Both operations are idempotent enough
 /// for connect/disconnect; callers own the captured [`PreviousProxy`] value.
 pub trait ProxyBackend {
+    /// Read the state that a subsequent `apply` will overwrite. The command
+    /// layer captures this before connecting so `restore` can put it back.
+    fn current(&self) -> Result<PreviousProxy>;
     fn apply(&self, port: u16, exclusions: &[String]) -> Result<()>;
     fn restore(&self, previous: &PreviousProxy) -> Result<()>;
 }
@@ -138,6 +141,10 @@ impl Default for InMemoryProxy {
 }
 
 impl ProxyBackend for InMemoryProxy {
+    fn current(&self) -> Result<PreviousProxy> {
+        Ok(self.state())
+    }
+
     fn apply(&self, port: u16, exclusions: &[String]) -> Result<()> {
         let mut state = self
             .state

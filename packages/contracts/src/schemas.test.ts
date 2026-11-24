@@ -86,7 +86,7 @@ describe("contract schemas", () => {
     ).toThrow();
   });
 
-  it("accepts testUrls as a list or the Rust JSON-text form", () => {
+  it("requires testUrls to be a canonical string list", () => {
     const base = {
       id: "sp",
       name: "YouTube",
@@ -98,9 +98,9 @@ describe("contract schemas", () => {
     expect(ServiceProfileSchema.parse({ ...base, testUrls: ["https://www.youtube.com"] }).testUrls).toEqual([
       "https://www.youtube.com",
     ]);
-    expect(
-      ServiceProfileSchema.parse({ ...base, testUrls: '["https://www.youtube.com"]' }).testUrls,
-    ).toEqual(["https://www.youtube.com"]);
+    expect(() =>
+      ServiceProfileSchema.parse({ ...base, testUrls: '["https://www.youtube.com"]' }),
+    ).toThrow();
     expect(() => ServiceProfileSchema.parse({ ...base, testUrls: "not-json" })).toThrow();
   });
 

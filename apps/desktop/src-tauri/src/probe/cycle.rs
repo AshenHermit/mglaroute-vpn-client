@@ -76,7 +76,7 @@ pub trait ProbeTransport: Send + Sync {
     ) -> ProbeFuture<'a>;
 }
 
-pub trait ProbeProgress: Send {
+pub trait ProbeProgress: Send + Sync {
     fn on_batch(&self, tested: usize, total: usize);
     fn on_finished(&self, outcome: &ProbeOutcome);
 }
