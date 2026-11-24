@@ -196,7 +196,10 @@ fn parse_ss(rest: &str, link: &str) -> Option<ParsedProfile> {
         let (method, _) = userinfo.split_once(':')?;
         (method.to_string(), host_port.to_string())
     };
-    let (address, port) = split_host_port(&host_port)?;
+    // Some clients emit `host:port/?plugin=...`; the slash belongs to the path,
+    // not the authority, and would otherwise break the port parse.
+    let host_port = host_port.trim_end_matches('/');
+    let (address, port) = split_host_port(host_port)?;
 
     let mut config = whitelisted_params(query);
     if let Value::Object(ref mut object) = config {
@@ -315,6 +318,19 @@ mod tests {
         assert_eq!(outcome.profiles[1].address, "legacy.example.com");
         assert_eq!(outcome.profiles[1].port, 8389);
         assert_eq!(outcome.profiles[1].remarks, "Legacy");
+    }
+
+    #[test]
+    fn decode_ss_sip002_trailing_slash_plugin() {
+        let userinfo =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("aes-256-gcm:pass");
+        let link = format!("ss://{userinfo}@ss.example.com:8388/?plugin=obfs-local#WithSlash");
+        let p = decode_one(&link);
+        assert_eq!(p.protocol, "ss");
+        assert_eq!(p.address, "ss.example.com");
+        assert_eq!(p.port, 8388);
+        assert_eq!(p.remarks, "WithSlash");
+        assert_eq!(p.link, link);
     }
 
     #[test]
