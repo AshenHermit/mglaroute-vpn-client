@@ -1,4 +1,5 @@
 pub mod core;
+pub mod probe;
 pub mod service_profiles;
 pub mod storage;
 pub mod subscription;
