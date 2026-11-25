@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
 use tokio::sync::Mutex;
+use tokio::time::MissedTickBehavior;
 
 use crate::anti_dpi::AntiDpiStatus;
 use crate::core::snapshot::ConfigSnapshot;
@@ -19,9 +20,7 @@ use crate::platform::proxy::{load_previous, PreviousProxy, ProxyBackend};
 use crate::platform::proxy_windows::WindowsProxy;
 use crate::probe::scheduler::should_refetch;
 use crate::service_profiles::ensure_defaults_on_empty;
-#[cfg(not(test))]
-use crate::state::emit;
-use crate::state::{MutationError, MutationGuard, MutationPermit};
+use crate::state::{emit, MutationError, MutationGuard, MutationPermit};
 use crate::storage::migrate;
 use crate::storage::models::Settings;
 use crate::storage::repos::{settings_repo, subscription_repo};
@@ -45,7 +44,7 @@ pub use subscription::{
 
 /// Generic, secret-free command errors. Underlying library errors are never
 /// forwarded: reqwest messages can echo a subscription URL and its token.
-#[derive(Debug, thiserror::Error, Serialize)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandError {
     #[error("another mutation is already in progress")]
@@ -235,14 +234,7 @@ fn exclusions(settings: &Settings) -> Vec<String> {
 }
 
 pub(crate) fn emit_connection(state: &ConnectionStatePayload) {
-    // `tauri::Emitter` drags the WebView2 GUI import table into unit-test
-    // binaries; on hosts with a stale loader DLL that aborts before `main`.
-    #[cfg(not(test))]
-    {
-        emit("connection-state", state.clone());
-    }
-    #[cfg(test)]
-    let _ = state;
+    emit("connection-state", state.clone());
 }
 
 async fn mark_faulted(state: &AppState) {
@@ -279,9 +271,16 @@ pub(crate) async fn handle_exited_child(
 
     // The process already exited; dropping the handle just frees the slot.
     drop(child);
+    let mut restore_ok = true;
     if let Some(previous) = previous {
-        let runtime = state.inner.runtime.lock().await;
-        let _ = runtime.proxy.restore(&previous);
+        for _ in 0..2 {
+            let runtime = state.inner.runtime.lock().await;
+            if runtime.proxy.restore(&previous).is_ok() {
+                restore_ok = true;
+                break;
+            }
+            restore_ok = false;
+        }
     }
     remove_config(&config_path);
 
@@ -292,18 +291,47 @@ pub(crate) async fn handle_exited_child(
         proxy_port: None,
     };
     emit_connection(&runtime.connection);
+    if !restore_ok {
+        // Generic only: proxy errors never carry subscription data.
+        return Err(CommandError::Proxy);
+    }
     Ok(true)
 }
 
-/// Polls the connected core every 500 ms. Shares the command mutation guard,
-/// so it cannot race connect/disconnect or the scheduler loops.
+/// Non-blocking probe of the connected core. No permit: a probe cycle can hold
+/// the single mutation permit for a while and must not delay crash detection.
+pub(crate) fn child_has_exited(state: &AppState) -> bool {
+    let mut runtime = match state.inner.runtime.try_lock() {
+        Ok(runtime) => runtime,
+        Err(_) => return false,
+    };
+    if runtime.connection.status != ConnectionStatus::Connected {
+        return false;
+    }
+    runtime
+        .child
+        .as_mut()
+        .is_some_and(|handle| handle.try_wait().unwrap_or(false))
+}
+
+/// Polls the connected core every 500 ms. `try_wait` needs no permit; the
+/// mutation guard is taken only for the state/proxy transition.
 pub async fn child_exit_watch(state: AppState) {
     let mut ticker = tokio::time::interval(Duration::from_millis(500));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     ticker.tick().await;
     loop {
         ticker.tick().await;
+        if !child_has_exited(&state) {
+            continue;
+        }
         if let Ok(_permit) = state.permit() {
-            let _ = handle_exited_child(&state).await;
+            if let Err(error) = handle_exited_child(&state).await {
+                if error == CommandError::Proxy {
+                    // Generic text only: proxy errors never carry secrets.
+                    eprintln!("failed to restore previous proxy after core exit");
+                }
+            }
         }
     }
 }
@@ -340,6 +368,7 @@ pub fn anti_dpi_stop() -> AntiDpiStatus {
 /// command mutation guard, so a manual action cannot race the scheduler.
 pub async fn refetch_loop(state: AppState) {
     let mut ticker = tokio::time::interval(Duration::from_secs(60));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     ticker.tick().await; // consume the immediate first tick
     loop {
         ticker.tick().await;
@@ -365,6 +394,7 @@ pub async fn refetch_loop(state: AppState) {
 /// owns the reconnect decision and records the switch timestamp.
 pub async fn auto_test_loop(state: AppState) {
     let mut ticker = tokio::time::interval(Duration::from_secs(60));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     ticker.tick().await;
     loop {
         ticker.tick().await;
@@ -384,37 +414,92 @@ pub async fn auto_test_loop(state: AppState) {
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use chrono::{DateTime, Duration as ChronoDuration, Utc};
     use rusqlite::Connection;
     use serde_json::json;
 
     use super::*;
     use crate::anti_dpi;
-    use crate::commands::probe::candidates;
-    use crate::platform::proxy::InMemoryProxy;
+    use crate::commands::connection::connect_impl;
+    use crate::commands::probe::{apply_reconnect, candidates};
+    use crate::platform::proxy::{
+        override_string, proxy_string, InMemoryProxy, PreviousProxy, ProxyBackend, ProxyError,
+    };
+    use crate::state::{set_event_sink, RecordingEventSink};
     use crate::{invoke_handler, COMMAND_NAMES};
     use crate::storage::models::{Profile, ServiceProfile, Subscription};
-    use crate::storage::repos::{profile_repo, service_profile_repo};
+    use crate::storage::repos::{profile_repo, service_profile_repo, settings_repo};
 
-    struct FakeLauncher;
+    struct FakeLauncher {
+        stopped: Arc<AtomicBool>,
+    }
 
     impl CoreLauncher for FakeLauncher {
         fn launch(
             &self,
             _snapshot: &ConfigSnapshot,
         ) -> std::result::Result<Box<dyn CoreHandle>, String> {
-            Ok(Box::new(FakeHandle))
+            Ok(Box::new(FakeHandle {
+                exited: false,
+                stopped: self.stopped.clone(),
+            }))
         }
     }
 
-    struct FakeHandle;
+    struct FakeHandle {
+        exited: bool,
+        stopped: Arc<AtomicBool>,
+    }
 
     impl CoreHandle for FakeHandle {
         fn stop(&mut self) -> std::result::Result<(), String> {
+            self.stopped.store(true, Ordering::SeqCst);
             Ok(())
         }
 
         fn try_wait(&mut self) -> std::result::Result<bool, String> {
-            Ok(true)
+            Ok(self.exited)
+        }
+    }
+
+    struct FailingRestoreProxy {
+        current: std::sync::Mutex<PreviousProxy>,
+    }
+
+    impl FailingRestoreProxy {
+        fn new(previous: PreviousProxy) -> Self {
+            Self {
+                current: std::sync::Mutex::new(previous),
+            }
+        }
+    }
+
+    impl ProxyBackend for FailingRestoreProxy {
+        fn current(&self) -> std::result::Result<PreviousProxy, ProxyError> {
+            Ok(self
+                .current
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone())
+        }
+
+        fn apply(&self, port: u16, exclusions: &[String]) -> std::result::Result<(), ProxyError> {
+            *self
+                .current
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = PreviousProxy::Manual {
+                server: proxy_string(port),
+                override_list: override_string(exclusions),
+            };
+            Ok(())
+        }
+
+        fn restore(&self, _previous: &PreviousProxy) -> std::result::Result<(), ProxyError> {
+            Err(ProxyError::Unsupported)
         }
     }
 
@@ -596,14 +681,19 @@ mod tests {
             conn,
             dir.path().to_path_buf(),
             Box::new(InMemoryProxy::new(original.clone())),
-            Box::new(FakeLauncher),
+            Box::new(FakeLauncher {
+                stopped: Arc::new(AtomicBool::new(false)),
+            }),
         );
         let config_path = dir.path().join("xray-p-1-10808.json");
         std::fs::write(&config_path, "{}").expect("write temp config");
         {
             let mut runtime = state.inner.runtime.lock().await;
             runtime.proxy.apply(10808, &[]).expect("apply proxy");
-            runtime.child = Some(Box::new(FakeHandle));
+            runtime.child = Some(Box::new(FakeHandle {
+                exited: true,
+                stopped: Arc::new(AtomicBool::new(false)),
+            }));
             runtime.previous = Some(original.clone());
             runtime.config_path = Some(config_path.clone());
             runtime.connection = ConnectionStatePayload {
@@ -631,5 +721,270 @@ mod tests {
         assert!(runtime.config_path.is_none());
         assert_eq!(runtime.proxy.current().expect("restored proxy"), original);
         assert!(!config_path.exists());
+    }
+
+    fn conn_with_profiles() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        migrate(&conn).expect("migrate");
+        subscription_repo::insert(
+            &conn,
+            &Subscription {
+                id: "sub-1".to_string(),
+                name: "test".to_string(),
+                url: "https://example.test/sub".to_string(),
+                enabled: true,
+                ..Default::default()
+            },
+        )
+        .expect("insert subscription");
+        let profile = |id: &str| Profile {
+            id: id.to_string(),
+            subscription_id: "sub-1".to_string(),
+            server_id: id.to_string(),
+            link: format!("vless://uuid@node.example.com:443#{id}"),
+            protocol: Some("vless".to_string()),
+            address: Some("node.example.com".to_string()),
+            port: Some(443),
+            raw_config: json!({"security": "none", "type": "raw"}).to_string(),
+            ..Default::default()
+        };
+        profile_repo::upsert_many(&conn, &[profile("p-1"), profile("p-best")])
+            .expect("insert profiles");
+        conn
+    }
+
+    async fn prepare_connected(
+        state: &AppState,
+        profile_id: &str,
+        previous: PreviousProxy,
+        port: u16,
+        stopped: Arc<AtomicBool>,
+        exited: bool,
+    ) -> std::path::PathBuf {
+        let config_path = state
+            .inner
+            .config_dir
+            .join(format!("xray-{profile_id}-{port}.json"));
+        std::fs::write(&config_path, "{}").expect("write temp config");
+        let mut runtime = state.inner.runtime.lock().await;
+        runtime.proxy.apply(port, &[]).expect("apply proxy");
+        runtime.child = Some(Box::new(FakeHandle { exited, stopped }));
+        runtime.previous = Some(previous);
+        runtime.config_path = Some(config_path.clone());
+        runtime.connection = ConnectionStatePayload {
+            status: ConnectionStatus::Connected,
+            profile_id: Some(profile_id.to_string()),
+            proxy_port: Some(port),
+        };
+        config_path
+    }
+
+    #[tokio::test]
+    async fn switch_while_connected_stops_old_core_and_restores_proxy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+        let stopped = Arc::new(AtomicBool::new(false));
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(InMemoryProxy::new(original.clone())),
+            Box::new(FakeLauncher {
+                stopped: stopped.clone(),
+            }),
+        );
+        let old_config =
+            prepare_connected(&state, "p-1", original.clone(), port, stopped.clone(), false).await;
+
+        {
+            let _permit = state.permit().expect("permit");
+            connect_impl(&state, Some("p-best".to_string()))
+                .await
+                .expect("switch");
+        }
+
+        assert!(stopped.load(Ordering::SeqCst), "old core must be stopped");
+        assert!(!old_config.exists(), "old temp config must be removed");
+        let runtime = state.inner.runtime.lock().await;
+        assert_eq!(
+            runtime.previous.as_ref(),
+            Some(&original),
+            "original proxy must be recaptured, not our own proxy"
+        );
+        assert_eq!(runtime.connection.status, ConnectionStatus::Connected);
+        assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-best"));
+        assert_eq!(runtime.proxy.current().expect("current proxy"), PreviousProxy::Manual {
+            server: proxy_string(port),
+            override_list: override_string(&[]),
+        });
+        assert!(runtime.child.is_some());
+    }
+
+    #[tokio::test]
+    async fn reconnect_gate_records_last_switch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+        let stopped = Arc::new(AtomicBool::new(false));
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(InMemoryProxy::new(original.clone())),
+            Box::new(FakeLauncher {
+                stopped: stopped.clone(),
+            }),
+        );
+        prepare_connected(&state, "p-1", original, port, stopped, false).await;
+
+        let now: DateTime<Utc> = DateTime::parse_from_rfc3339("2026-11-25T00:00:00.000Z")
+            .expect("parse timestamp")
+            .with_timezone(&Utc);
+        let candidates = vec![
+            ("p-1".to_string(), 20, true),
+            ("p-best".to_string(), 10, true),
+        ];
+        let mut reconnect_settings = settings.clone();
+        reconnect_settings.auto_reconnect_enabled = false;
+        reconnect_settings.reconnect_cooldown_seconds = 60;
+
+        {
+            let _permit = state.permit().expect("permit");
+            apply_reconnect(&state, &reconnect_settings, &candidates, now)
+                .await
+                .expect("disabled gate");
+        }
+        {
+            let runtime = state.inner.runtime.lock().await;
+            assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-1"));
+            assert!(runtime.last_switch.is_none());
+        }
+
+        reconnect_settings.auto_reconnect_enabled = true;
+        {
+            let mut runtime = state.inner.runtime.lock().await;
+            runtime.last_switch = Some(now);
+        }
+        {
+            let _permit = state.permit().expect("permit");
+            apply_reconnect(&state, &reconnect_settings, &candidates, now)
+                .await
+                .expect("cooldown gate");
+        }
+        {
+            let runtime = state.inner.runtime.lock().await;
+            assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-1"));
+        }
+
+        {
+            let mut runtime = state.inner.runtime.lock().await;
+            runtime.last_switch = Some(now - ChronoDuration::seconds(120));
+        }
+        {
+            let _permit = state.permit().expect("permit");
+            apply_reconnect(&state, &reconnect_settings, &candidates, now)
+                .await
+                .expect("switch after cooldown");
+        }
+        {
+            let runtime = state.inner.runtime.lock().await;
+            assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-best"));
+            assert_eq!(runtime.last_switch, Some(now));
+        }
+    }
+
+    #[tokio::test]
+    async fn child_crash_restore_failure_is_surfaced() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        migrate(&conn).expect("migrate");
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(FailingRestoreProxy::new(original.clone())),
+            Box::new(FakeLauncher {
+                stopped: Arc::new(AtomicBool::new(false)),
+            }),
+        );
+        let config_path = prepare_connected(
+            &state,
+            "p-1",
+            original,
+            10808,
+            Arc::new(AtomicBool::new(false)),
+            true,
+        )
+        .await;
+
+        {
+            let _permit = state.permit().expect("permit");
+            let result = handle_exited_child(&state).await;
+            assert_eq!(
+                result.expect_err("restore failure must surface"),
+                CommandError::Proxy
+            );
+        }
+
+        let runtime = state.inner.runtime.lock().await;
+        assert_eq!(runtime.connection.status, ConnectionStatus::Faulted);
+        assert!(runtime.child.is_none());
+        assert!(runtime.previous.is_none());
+        assert!(runtime.config_path.is_none());
+        assert_eq!(
+            runtime.proxy.current().expect("proxy still ours"),
+            PreviousProxy::Manual {
+                server: proxy_string(10808),
+                override_list: override_string(&[]),
+            }
+        );
+        assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn connection_state_event_emitted() {
+        let recorder = Arc::new(RecordingEventSink::new());
+        set_event_sink(recorder.clone());
+
+        emit_connection(&ConnectionStatePayload {
+            status: ConnectionStatus::Faulted,
+            profile_id: Some("p-1".to_string()),
+            proxy_port: None,
+        });
+
+        let expected = json!({
+            "status": "faulted",
+            "profileId": "p-1",
+            "proxyPort": null,
+        });
+        assert!(
+            recorder
+                .events()
+                .iter()
+                .any(|(event, payload)| event == "connection-state" && *payload == expected),
+            "connection-state event with camelCase payload must be emitted"
+        );
     }
 }

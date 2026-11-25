@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
+
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
@@ -9,7 +10,7 @@ use super::connection::{connect_impl, disconnect_impl};
 use super::{AppState, CommandError, ConnectionStatus};
 use crate::probe::cycle::{run_probe_cycle, ProbeOutcome};
 use crate::reconnect::{decide_reconnect, ReconnectDecision};
-use crate::storage::models::Profile;
+use crate::storage::models::{Profile, Settings};
 use crate::storage::repos::{profile_repo, service_profile_repo, settings_repo};
 
 /// CamelCase mirror of the TS `Profile` contract.
@@ -113,6 +114,51 @@ pub fn best_eligible_profile(conn: &Connection) -> rusqlite::Result<Option<Profi
         }))
 }
 
+/// Caller holds the mutation permit. The `auto_reconnect_enabled` gate, the
+/// `Connected` gate and recording `last_switch` belong here; the pure decision
+/// function owns neither.
+pub(crate) async fn apply_reconnect(
+    state: &AppState,
+    settings: &Settings,
+    candidates: &[(String, u64, bool)],
+    now: DateTime<Utc>,
+) -> Result<(), CommandError> {
+    if !settings.auto_reconnect_enabled {
+        return Ok(());
+    }
+
+    let (current_id, current_status, last_switch) = {
+        let runtime = state.inner.runtime.lock().await;
+        (
+            runtime.connection.profile_id.clone(),
+            runtime.connection.status,
+            runtime.last_switch,
+        )
+    };
+    if current_status != ConnectionStatus::Connected {
+        return Ok(());
+    }
+
+    match decide_reconnect(
+        current_id.as_deref(),
+        candidates,
+        settings,
+        now,
+        last_switch,
+    ) {
+        ReconnectDecision::Switch { profile_id } => {
+            connect_impl(state, Some(profile_id)).await?;
+            let mut runtime = state.inner.runtime.lock().await;
+            runtime.last_switch = Some(now);
+        }
+        ReconnectDecision::Disconnect => {
+            disconnect_impl(state).await?;
+        }
+        ReconnectDecision::None => {}
+    }
+    Ok(())
+}
+
 /// Caller holds the mutation permit. Auto-reconnect is gated here, and the
 /// last-switch timestamp is recorded here after a successful switch — the pure
 /// `decide_reconnect` function owns neither.
@@ -128,40 +174,11 @@ pub(crate) async fn run_impl(state: &AppState) -> Result<ProbeOutcome, CommandEr
     };
 
     if settings.auto_reconnect_enabled {
-        let candidates = {
+        let reconnect_candidates = {
             let conn = state.inner.conn.lock().await;
             candidates(&conn)?
         };
-        let (current_id, current_status, last_switch) = {
-            let runtime = state.inner.runtime.lock().await;
-            (
-                runtime.connection.profile_id.clone(),
-                runtime.connection.status,
-                runtime.last_switch,
-            )
-        };
-
-        if current_status == ConnectionStatus::Connected {
-            let now = Utc::now();
-            match decide_reconnect(
-                current_id.as_deref(),
-                &candidates,
-                &settings,
-                now,
-                last_switch,
-            ) {
-                ReconnectDecision::Switch { profile_id } => {
-                    if connect_impl(state, Some(profile_id)).await.is_ok() {
-                        let mut runtime = state.inner.runtime.lock().await;
-                        runtime.last_switch = Some(now);
-                    }
-                }
-                ReconnectDecision::Disconnect => {
-                    let _ = disconnect_impl(state).await;
-                }
-                ReconnectDecision::None => {}
-            }
-        }
+        let _ = apply_reconnect(state, &settings, &reconnect_candidates, Utc::now()).await;
     }
 
     Ok(outcome)

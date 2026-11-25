@@ -37,6 +37,30 @@ pub(crate) async fn connect_impl(
     }
     let exclusions = exclusions(&settings);
 
+    // A switch while connected must first give up ownership of the old
+    // connection. Stopping its core and restoring its proxy means the proxy
+    // read below is the user's original state, not our own local proxy.
+    let (mut old_child, old_previous, old_config) = {
+        let mut runtime = state.inner.runtime.lock().await;
+        (
+            runtime.child.take(),
+            runtime.previous.take(),
+            runtime.config_path.take(),
+        )
+    };
+    if !stop_child(&mut old_child) {
+        mark_faulted(state).await;
+        return Err(CommandError::Core);
+    }
+    if let Some(previous) = old_previous {
+        let runtime = state.inner.runtime.lock().await;
+        if runtime.proxy.restore(&previous).is_err() {
+            mark_faulted(state).await;
+            return Err(CommandError::Proxy);
+        }
+    }
+    remove_config(&old_config);
+
     {
         let mut runtime = state.inner.runtime.lock().await;
         runtime.connection = ConnectionStatePayload {
@@ -67,6 +91,20 @@ pub(crate) async fn connect_impl(
     };
 
     if wait_for_port(port, Duration::from_secs(2)).is_err() {
+        stop_child(&mut child);
+        remove_config(&Some(snapshot.config_path.clone()));
+        mark_faulted(state).await;
+        return Err(CommandError::Core);
+    }
+    // The old core may still be closing its port; readiness alone cannot prove
+    // the replacement bound successfully. A dead new core is a hard failure.
+    let new_core_alive = child
+        .as_mut()
+        .map(|handle| handle.try_wait().map(|exited| !exited))
+        .transpose()
+        .map_err(|_| CommandError::Core)?
+        .unwrap_or(false);
+    if !new_core_alive {
         stop_child(&mut child);
         remove_config(&Some(snapshot.config_path.clone()));
         mark_faulted(state).await;

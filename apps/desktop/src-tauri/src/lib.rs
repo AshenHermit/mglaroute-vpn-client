@@ -66,7 +66,7 @@ pub fn run() {
             // No auto-connect: proxy state is restored, the operator connects.
             let state = commands::bootstrap(&dir)?;
             app.manage(state.clone());
-            state::set_app_handle(app.handle().clone());
+            state::install_tauri_sink(app.handle().clone());
             handle.spawn(commands::refetch_loop(state.clone()));
             handle.spawn(commands::auto_test_loop(state.clone()));
             handle.spawn(commands::child_exit_watch(state));
