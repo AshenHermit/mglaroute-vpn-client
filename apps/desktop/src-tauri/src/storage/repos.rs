@@ -95,6 +95,7 @@ fn settings_from_row(row: &Row<'_>) -> Result<Settings> {
         auto_test_enabled: row.get("auto_test_enabled")?,
         test_interval_minutes: row.get("test_interval_minutes")?,
         test_timeout_ms: row.get("test_timeout_ms")?,
+        test_concurrency: row.get("test_concurrency")?,
         auto_reconnect_enabled: row.get("auto_reconnect_enabled")?,
         reconnect_cooldown_seconds: row.get("reconnect_cooldown_seconds")?,
         ping_url: row.get("ping_url")?,
@@ -413,16 +414,17 @@ pub mod settings_repo {
     fn insert_row(conn: &Connection, value: &Settings) -> Result<()> {
         conn.execute(
             "INSERT INTO settings (id, auto_refetch_enabled, refetch_interval_minutes, \
-             auto_test_enabled, test_interval_minutes, test_timeout_ms, auto_reconnect_enabled, \
-             reconnect_cooldown_seconds, ping_url, local_proxy_port, proxy_exclusions, \
-             system_proxy_enabled) \
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             auto_test_enabled, test_interval_minutes, test_timeout_ms, test_concurrency, \
+             auto_reconnect_enabled, reconnect_cooldown_seconds, ping_url, local_proxy_port, \
+             proxy_exclusions, system_proxy_enabled) \
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 value.auto_refetch_enabled,
                 value.refetch_interval_minutes,
                 value.auto_test_enabled,
                 value.test_interval_minutes,
                 value.test_timeout_ms,
+                value.test_concurrency,
                 value.auto_reconnect_enabled,
                 value.reconnect_cooldown_seconds,
                 value.ping_url,
@@ -450,8 +452,9 @@ pub mod settings_repo {
         let changed = conn.execute(
             "UPDATE settings SET auto_refetch_enabled = ?1, refetch_interval_minutes = ?2, \
              auto_test_enabled = ?3, test_interval_minutes = ?4, test_timeout_ms = ?5, \
-             auto_reconnect_enabled = ?6, reconnect_cooldown_seconds = ?7, ping_url = ?8, \
-             local_proxy_port = ?9, proxy_exclusions = ?10, system_proxy_enabled = ?11 \
+             test_concurrency = ?6, auto_reconnect_enabled = ?7, reconnect_cooldown_seconds = ?8, \
+             ping_url = ?9, local_proxy_port = ?10, proxy_exclusions = ?11, \
+             system_proxy_enabled = ?12 \
              WHERE id = 1",
             params![
                 value.auto_refetch_enabled,
@@ -459,6 +462,7 @@ pub mod settings_repo {
                 value.auto_test_enabled,
                 value.test_interval_minutes,
                 value.test_timeout_ms,
+                value.test_concurrency,
                 value.auto_reconnect_enabled,
                 value.reconnect_cooldown_seconds,
                 value.ping_url,

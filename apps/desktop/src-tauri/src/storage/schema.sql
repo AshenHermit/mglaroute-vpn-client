@@ -1,4 +1,4 @@
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 CREATE TABLE IF NOT EXISTS subscriptions (
     id TEXT PRIMARY KEY,
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS settings (
     auto_test_enabled INTEGER NOT NULL DEFAULT 0,
     test_interval_minutes INTEGER NOT NULL DEFAULT 15,
     test_timeout_ms INTEGER NOT NULL DEFAULT 5000,
+    test_concurrency INTEGER NOT NULL DEFAULT 10,
     auto_reconnect_enabled INTEGER NOT NULL DEFAULT 0,
     reconnect_cooldown_seconds INTEGER NOT NULL DEFAULT 60,
     ping_url TEXT NOT NULL DEFAULT 'https://www.google.com/generate_204',

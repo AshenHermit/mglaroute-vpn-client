@@ -18,6 +18,7 @@ type BooleanField =
 type NumberField =
   | "testIntervalMinutes"
   | "testTimeoutMs"
+  | "testConcurrency"
   | "reconnectCooldownSeconds"
   | "localProxyPort";
 
@@ -143,6 +144,11 @@ export function SettingsForm() {
             label="Test timeout (ms)"
             value={form.testTimeoutMs}
             onChange={setNumber("testTimeoutMs")}
+          />
+          <NumberInput
+            label="Test concurrency"
+            value={form.testConcurrency}
+            onChange={setNumber("testConcurrency")}
           />
           <NumberInput
             label="Reconnect cooldown (seconds)"

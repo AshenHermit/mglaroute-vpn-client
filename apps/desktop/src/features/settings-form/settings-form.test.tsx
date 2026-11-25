@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/invoke", () => ({ invoke: vi.fn() }));
 
@@ -14,6 +14,7 @@ const settings = {
   autoTestEnabled: true,
   testIntervalMinutes: 10,
   testTimeoutMs: 2000,
+  testConcurrency: 10,
   autoReconnectEnabled: false,
   reconnectCooldownSeconds: 30,
   pingUrl: "https://www.google.com/generate_204",
@@ -23,6 +24,8 @@ const settings = {
 };
 
 describe("SettingsForm", () => {
+  afterEach(() => cleanup());
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockedInvoke.mockImplementation(async () => settings as never);
@@ -41,6 +44,24 @@ describe("SettingsForm", () => {
         "settings_update",
         expect.anything(),
         { autoRefetchEnabled: false },
+      ),
+    );
+  });
+
+  it("edits and saves test concurrency through settings_update", async () => {
+    render(<SettingsForm />);
+
+    const input = await screen.findByRole("spinbutton", { name: /test concurrency/i });
+    expect((input as HTMLInputElement).value).toBe("10");
+
+    fireEvent.change(input, { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "settings_update",
+        expect.anything(),
+        expect.objectContaining({ testConcurrency: 12 }),
       ),
     );
   });

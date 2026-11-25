@@ -55,12 +55,16 @@ export const ServiceProfileSchema = z.object({
 });
 export type ServiceProfile = z.infer<typeof ServiceProfileSchema>;
 
+const testConcurrency = z.number().int().min(1).max(20);
+
 export const SettingsSchema = z.object({
   autoRefetchEnabled: z.boolean(),
   refetchIntervalMinutes: z.number().int(),
   autoTestEnabled: z.boolean(),
   testIntervalMinutes: z.number().int(),
   testTimeoutMs: z.number().int(),
+  // Default keeps older callers valid; settings_get always returns the field.
+  testConcurrency: testConcurrency.default(10),
   autoReconnectEnabled: z.boolean(),
   reconnectCooldownSeconds: z.number().int(),
   pingUrl: z.string(),
@@ -70,7 +74,10 @@ export const SettingsSchema = z.object({
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
-export const SettingsPatchSchema = SettingsSchema.partial();
+// Patch parsing must stay exact: no defaults added to untouched fields.
+export const SettingsPatchSchema = SettingsSchema.partial().extend({
+  testConcurrency: testConcurrency.optional(),
+});
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
 
 export const ConnectionStateSchema = z.object({
