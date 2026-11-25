@@ -73,31 +73,57 @@ async function fetchBinary() {
   console.log(`Bundled xray${EXT} and xray-${TRIPLE}${EXT}`);
 }
 
-function verifyBinaries() {
-  const shaText = fs.readFileSync(SHA_FILE, "utf8");
-  for (const candidate of [SIMPLE, SUITED, process.env.XRAY_BINARY_PATH].filter(Boolean)) {
-    if (!fs.existsSync(candidate)) throw new Error(`missing bundled xray: ${path.basename(candidate)}`);
-    verifyFileSha256(candidate, shaText);
-  }
-  console.log(checkVersion(process.env.XRAY_BINARY_PATH || SUITED).trim());
+export function verifyBinaries(options = {}) {
+  const {
+    binDir = BIN_DIR,
+    platform = PLATFORM,
+    arch = ARCH,
+    xrayBinaryPath = process.env.XRAY_BINARY_PATH,
+  } = options;
+  const ext = platform === "win32" ? ".exe" : "";
+  const triple = targetTriple(platform, arch);
+  const simple = path.join(binDir, `xray${ext}`);
+  const suited = path.join(binDir, `xray-${triple}${ext}`);
+  const shaFile = path.join(binDir, `xray${ext}.sha256`);
 
-  const antiDir = path.join(BIN_DIR, "antiddpi");
+  if (xrayBinaryPath) {
+    // Dev override is a genuinely different binary: never read the bundled SHA_FILE
+    // and never force its hash to match the bundled digest. No separate digest is
+    // shipped for dev binaries, so state the skipped verification explicitly.
+    if (!fs.existsSync(xrayBinaryPath)) throw new Error(`missing dev xray: ${path.basename(xrayBinaryPath)}`);
+    console.warn(
+      `[dev] XRAY_BINARY_PATH=${path.basename(xrayBinaryPath)}: bundled sha256 verification skipped; binary not verified against bundle`,
+    );
+    console.log(checkVersion(xrayBinaryPath).trim());
+  } else {
+    const shaText = fs.readFileSync(shaFile, "utf8");
+    for (const candidate of [simple, suited]) {
+      if (!fs.existsSync(candidate)) throw new Error(`missing bundled xray: ${path.basename(candidate)}`);
+      verifyFileSha256(candidate, shaText);
+    }
+    console.log(checkVersion(suited).trim());
+  }
+
+  const antiDir = path.join(binDir, "antiddpi");
   for (const name of ["winws2.exe", "cygwin1.dll", "WinDivert.dll", "WinDivert64.sys"]) {
     if (!fs.existsSync(path.join(antiDir, name))) throw new Error(`missing anti-DPI asset: ${name}`);
   }
-  console.log("Binary bundle verified");
+  console.log(xrayBinaryPath ? "Dev xray checked (bundled sha256 skipped)" : "Binary bundle verified");
 }
 
-if (process.argv.includes("--verify")) {
-  try {
-    verifyBinaries();
-  } catch (error) {
-    console.error(`binary verification failed: ${error.message}`);
-    process.exit(1);
+const invokedAsCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedAsCli) {
+  if (process.argv.includes("--verify")) {
+    try {
+      verifyBinaries();
+    } catch (error) {
+      console.error(`binary verification failed: ${error.message}`);
+      process.exit(1);
+    }
+  } else {
+    fetchBinary().catch((error) => {
+      console.error(`xray fetch failed: ${error.message}`);
+      process.exit(1);
+    });
   }
-} else {
-  fetchBinary().catch((error) => {
-    console.error(`xray fetch failed: ${error.message}`);
-    process.exit(1);
-  });
 }
