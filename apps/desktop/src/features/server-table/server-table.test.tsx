@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import type { Profile } from "@mglaroute/contracts";
 import { ServerTable } from "./ServerTable";
 
@@ -63,5 +63,31 @@ describe("ServerTable", () => {
     expect(container.querySelector("div.overflow-x-auto")).toBeTruthy();
     expect(container.querySelector("table")?.className).toContain("table-fixed");
     expect(container.querySelectorAll("td.break-words").length).toBeGreaterThan(0);
+  });
+
+  it("reports a clicked row and reflects the selected id", () => {
+    const onSelect = vi.fn();
+    const rows = [profile("p-1", 10, true, 0), profile("p-2", 20, true, 1)];
+    const { rerender } = render(
+      <ServerTable profiles={rows} selectedId={null} onSelect={onSelect} />,
+    );
+
+    const row = screen
+      .getAllByTestId("server-row")
+      .find((candidate) => candidate.getAttribute("data-profile-id") === "p-2");
+    expect(row).toBeTruthy();
+    expect(row?.getAttribute("role")).toBe("button");
+    expect(row?.getAttribute("data-selected")).toBe("false");
+
+    fireEvent.click(row!);
+    expect(onSelect).toHaveBeenCalledWith("p-2");
+
+    rerender(
+      <ServerTable profiles={rows} selectedId="p-2" onSelect={onSelect} />,
+    );
+    const selected = screen
+      .getAllByTestId("server-row")
+      .find((candidate) => candidate.getAttribute("data-profile-id") === "p-2");
+    expect(selected?.getAttribute("data-selected")).toBe("true");
   });
 });

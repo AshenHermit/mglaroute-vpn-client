@@ -517,7 +517,7 @@ mod tests {
 
     use super::*;
     use crate::anti_dpi;
-    use crate::commands::connection::connect_impl;
+    use crate::commands::connection::{connect_impl, select_connect_profile};
     use crate::commands::probe::{apply_reconnect, candidates};
     use crate::platform::proxy::{
         override_string, proxy_string, InMemoryProxy, PreviousProxy, ProxyBackend, ProxyError,
@@ -720,6 +720,88 @@ mod tests {
             .expect("a passing profile exists");
         assert_eq!(chosen.id, "p-fast");
         assert_eq!(chosen.latency_ms, Some(10));
+    }
+
+    #[test]
+    fn connect_none_prefers_best_eligible() {
+        let conn = seeded_conn();
+        let chosen = select_connect_profile(&conn, None)
+            .expect("select best eligible")
+            .expect("a passing profile exists");
+        assert_eq!(chosen.id, "p-fast");
+    }
+
+    #[test]
+    fn connect_none_falls_back_only_to_enabled_subscriptions() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        migrate(&conn).expect("migrate");
+        subscription_repo::insert(
+            &conn,
+            &Subscription {
+                id: "sub-1".to_string(),
+                name: "test".to_string(),
+                url: "https://example.test/sub".to_string(),
+                enabled: true,
+                ..Default::default()
+            },
+        )
+        .expect("insert enabled subscription");
+        subscription_repo::insert(
+            &conn,
+            &Subscription {
+                id: "sub-disabled".to_string(),
+                name: "disabled".to_string(),
+                url: "https://example.test/disabled".to_string(),
+                enabled: false,
+                ..Default::default()
+            },
+        )
+        .expect("insert disabled subscription");
+        let profile =
+            |id: &str, subscription_id: &str, sort_index: i64, latency: Option<i64>| Profile {
+                id: id.to_string(),
+                subscription_id: subscription_id.to_string(),
+                server_id: id.to_string(),
+                link: format!("vless://uuid@node.example.com:443#{id}"),
+                latency_ms: latency,
+                sort_index,
+                ..Default::default()
+            };
+        // No cached passing results: every enabled profile is unmeasured, so
+        // `best_eligible_profile` has no candidate and selection must fall back
+        // to the first enabled-present row by (sort_index, id).
+        profile_repo::upsert_many(
+            &conn,
+            &[
+                profile("p-slow", "sub-1", 2, None),
+                profile("p-fast", "sub-1", -1, None),
+                profile("p-mid", "sub-1", 0, None),
+                profile("p-disabled", "sub-disabled", -100, Some(1)),
+            ],
+        )
+        .expect("insert profiles");
+
+        let chosen = select_connect_profile(&conn, None)
+            .expect("select fallback")
+            .expect("an enabled profile exists");
+        assert_eq!(chosen.id, "p-fast");
+        assert_ne!(chosen.id, "p-disabled");
+    }
+
+    #[test]
+    fn connect_some_ignores_service_gating() {
+        let conn = seeded_conn();
+        // p-slow is present+enabled but fails the active service profile;
+        // an explicit selection must still resolve it.
+        let chosen = select_connect_profile(&conn, Some("p-slow".to_string()))
+            .expect("select by id")
+            .expect("present enabled profile selected by id");
+        assert_eq!(chosen.id, "p-slow");
+        assert!(
+            select_connect_profile(&conn, Some("missing".to_string()))
+                .expect("select by id")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1138,7 +1220,6 @@ mod tests {
         reconnect_settings.reconnect_cooldown_seconds = 60;
 
         {
-            let _permit = state.permit().expect("permit");
             apply_reconnect(&state, &reconnect_settings, &candidates, now)
                 .await
                 .expect("disabled gate");
@@ -1155,7 +1236,6 @@ mod tests {
             runtime.last_switch = Some(now);
         }
         {
-            let _permit = state.permit().expect("permit");
             apply_reconnect(&state, &reconnect_settings, &candidates, now)
                 .await
                 .expect("cooldown gate");
@@ -1170,7 +1250,6 @@ mod tests {
             runtime.last_switch = Some(now - ChronoDuration::seconds(120));
         }
         {
-            let _permit = state.permit().expect("permit");
             apply_reconnect(&state, &reconnect_settings, &candidates, now)
                 .await
                 .expect("switch after cooldown");
@@ -1180,6 +1259,50 @@ mod tests {
             assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-best"));
             assert_eq!(runtime.last_switch, Some(now));
         }
+    }
+
+    #[tokio::test]
+    async fn apply_reconnect_skips_when_connection_busy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings.auto_reconnect_enabled = true;
+        settings.reconnect_cooldown_seconds = 0;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+        let stopped = Arc::new(AtomicBool::new(false));
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(InMemoryProxy::new(original.clone())),
+            Box::new(FakeLauncher {
+                stopped: stopped.clone(),
+            }),
+        );
+        prepare_connected(&state, "p-1", original, port, stopped, false).await;
+
+        let candidates = vec![
+            ("p-1".to_string(), 20, true),
+            ("p-best".to_string(), 10, true),
+        ];
+        // A manual connect owns the connection slot; the probe tick must skip
+        // instead of stealing it or surfacing a busy error.
+        let _permit = state.connection_permit().expect("connection permit");
+        apply_reconnect(&state, &settings, &candidates, Utc::now())
+            .await
+            .expect("busy connection slot is skipped, not an error");
+
+        let runtime = state.inner.runtime.lock().await;
+        assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-1"));
+        assert!(runtime.last_switch.is_none());
     }
 
     #[tokio::test]

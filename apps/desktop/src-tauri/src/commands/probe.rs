@@ -120,15 +120,19 @@ pub fn best_eligible_profile(conn: &Connection) -> rusqlite::Result<Option<Profi
         }))
 }
 
-/// Caller holds the mutation permit. The `auto_reconnect_enabled` gate, the
-/// `Connected` gate and recording `last_switch` belong here; the pure decision
-/// function owns neither.
+/// Takes the connection permit itself so a probe tick can never race a manual
+/// Connect: when the slot is busy the tick is skipped with `Ok(())`. The
+/// `auto_reconnect_enabled` gate, the `Connected` gate and recording
+/// `last_switch` belong here; the pure decision function owns neither.
 pub(crate) async fn apply_reconnect(
     state: &AppState,
     settings: &Settings,
     candidates: &[(String, u64, bool)],
     now: DateTime<Utc>,
 ) -> Result<(), CommandError> {
+    let Some(_permit) = state.try_connection_permit() else {
+        return Ok(());
+    };
     if !settings.auto_reconnect_enabled {
         return Ok(());
     }

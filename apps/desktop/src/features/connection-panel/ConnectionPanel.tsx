@@ -17,6 +17,7 @@ export function ConnectionPanel() {
   const state = useConnectionStore((store) => store.state);
   const setState = useConnectionStore((store) => store.setState);
   const setNotice = useAppStore((store) => store.setNotice);
+  const selectedProfileId = useAppStore((store) => store.selectedProfileId);
   const [busy, setBusy] = useState(false);
 
   useConnectionEvents();
@@ -39,14 +40,15 @@ export function ConnectionPanel() {
     setBusy(true);
     try {
       const next = await invoke("connection_connect", ConnectionStateSchema, {
-        profileId: null,
+        profileId: selectedProfileId,
       });
       setState(next);
     } catch (error) {
-      // A concurrent probe holds the mutation permit. Report that distinctly
-      // and keep the real connection state; it is not a connection fault.
-      if (commandErrorCode(error) === "busy") {
-        setNotice("Another operation is in progress. Try again shortly.");
+      // The connection slot belongs to another connect/disconnect. Report
+      // that distinctly and keep the real state; it is not a connection fault.
+      // A running probe does not block Connect, so no probe gating here.
+      if (commandErrorCode(error) === "connection_busy") {
+        setNotice("Connection operation in progress");
         return;
       }
       setState({ status: "faulted", profileId: null, proxyPort: null });
@@ -62,8 +64,8 @@ export function ConnectionPanel() {
       const next = await invoke("connection_disconnect", ConnectionStateSchema);
       setState(next);
     } catch (error) {
-      if (commandErrorCode(error) === "busy") {
-        setNotice("Another operation is in progress. Try again shortly.");
+      if (commandErrorCode(error) === "connection_busy") {
+        setNotice("Connection operation in progress");
         return;
       }
       setState({ status: "faulted", profileId: null, proxyPort: null });

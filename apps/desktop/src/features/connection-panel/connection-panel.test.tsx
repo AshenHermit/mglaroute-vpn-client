@@ -32,6 +32,7 @@ describe("ConnectionPanel", () => {
     vi.clearAllMocks();
     useConnectionStore.getState().setState(disconnected);
     useAppStore.getState().setNotice(null);
+    useAppStore.getState().setSelectedProfileId(null);
     mockedInvoke.mockResolvedValue({
       status: "disconnected",
       profileId: null,
@@ -72,7 +73,28 @@ describe("ConnectionPanel", () => {
     expect(screen.getByText(/10808/)).toBeTruthy();
   });
 
-  it("keeps state intact when connect is rejected as busy", async () => {
+  it("passes the selected profile id to connect", async () => {
+    useAppStore.getState().setSelectedProfileId("p-2");
+    render(<ConnectionPanel />);
+
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "connection_status",
+        expect.anything(),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "connection_connect",
+        expect.anything(),
+        { profileId: "p-2" },
+      ),
+    );
+  });
+
+  it("keeps state intact when connect is rejected as connection_busy", async () => {
     const { getByRole, queryByText, getByTestId } = render(<ConnectionPanel />);
     await waitFor(() =>
       expect(mockedInvoke).toHaveBeenCalledWith(
@@ -82,13 +104,13 @@ describe("ConnectionPanel", () => {
     );
 
     mockedInvoke.mockRejectedValueOnce(
-      new CommandInvocationError("connection_connect", "busy"),
+      new CommandInvocationError("connection_connect", "connection_busy"),
     );
     fireEvent.click(getByRole("button", { name: "Connect" }));
 
     await waitFor(() =>
       expect(useAppStore.getState().notice).toBe(
-        "Another operation is in progress. Try again shortly.",
+        "Connection operation in progress",
       ),
     );
     expect(queryByText("Connection faulted. Reconnect to continue.")).toBeNull();

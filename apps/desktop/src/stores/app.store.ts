@@ -25,6 +25,7 @@ export type AppStore = {
   probeTotal: number;
   lastProbeFinishedAt: string | null;
   notice: string | null;
+  selectedProfileId: string | null;
   setSubscriptions: (subscriptions: Subscription[]) => void;
   setServiceProfiles: (serviceProfiles: ServiceProfile[]) => void;
   setProfiles: (profiles: Profile[]) => void;
@@ -32,6 +33,7 @@ export type AppStore = {
   setProbeProgress: (tested: number, total: number) => void;
   setProbeFinished: (finishedAt: string) => void;
   setNotice: (notice: string | null) => void;
+  setSelectedProfileId: (id: string | null) => void;
 };
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -43,6 +45,8 @@ export const useAppStore = create<AppStore>((set) => ({
   probeTotal: 0,
   lastProbeFinishedAt: null,
   notice: null,
+  // Session-only: which server the next Connect targets. Never persisted.
+  selectedProfileId: null,
   setSubscriptions: (subscriptions) => set({ subscriptions }),
   setServiceProfiles: (serviceProfiles) => set({ serviceProfiles }),
   setProfiles: (profiles) => set({ profiles }),
@@ -50,6 +54,7 @@ export const useAppStore = create<AppStore>((set) => ({
   setProbeProgress: (probeTested, probeTotal) => set({ probeTested, probeTotal }),
   setProbeFinished: (lastProbeFinishedAt) => set({ lastProbeFinishedAt }),
   setNotice: (notice) => set({ notice }),
+  setSelectedProfileId: (selectedProfileId) => set({ selectedProfileId }),
 }));
 
 /** Subscribe to backend progress events. Payloads are validated before use. */

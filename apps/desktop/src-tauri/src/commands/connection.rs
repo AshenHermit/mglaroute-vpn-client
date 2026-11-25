@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use rusqlite::Connection;
 use tauri::State;
 
 use super::probe::best_eligible_profile;
@@ -10,7 +11,32 @@ use super::{
 use crate::core::config::build_connection_config;
 use crate::core::snapshot::snapshot_for;
 use crate::core::supervisor::wait_for_port;
+use crate::storage::models::Profile;
 use crate::storage::repos::{profile_repo, settings_repo};
+
+/// Resolve which server a Connect should launch, without touching the network
+/// or the process. An explicit id keeps the enabled-present lookup and is not
+/// gated on cached service results. With no id, a passing cached result wins;
+/// otherwise fall back to the first enabled-present server by `(sort_index,
+/// id)` so the very first click works before any test cycle has run. Profiles
+/// from disabled subscriptions are never eligible: `list_present_enabled`
+/// joins `subscriptions` and filters on `enabled`.
+pub fn select_connect_profile(
+    conn: &Connection,
+    profile_id: Option<String>,
+) -> rusqlite::Result<Option<Profile>> {
+    match profile_id {
+        Some(id) => Ok(profile_repo::list_present_enabled(conn)?
+            .into_iter()
+            .find(|profile| profile.id == id)),
+        None => {
+            if let Some(best) = best_eligible_profile(conn)? {
+                return Ok(Some(best));
+            }
+            Ok(profile_repo::list_present_enabled(conn)?.into_iter().next())
+        }
+    }
+}
 
 /// Caller holds the mutation permit. Config generation and process launch both
 /// consume the same immutable `ConfigSnapshot`.
@@ -21,13 +47,8 @@ pub(crate) async fn connect_impl(
     let (settings, profile) = {
         let conn = state.inner.conn.lock().await;
         let settings = settings_repo::get(&conn)?;
-        let profile = match profile_id {
-            Some(id) => profile_repo::list_present_enabled(&conn)?
-                .into_iter()
-                .find(|profile| profile.id == id),
-            None => best_eligible_profile(&conn)?,
-        }
-        .ok_or(CommandError::NotFound)?;
+        let profile = select_connect_profile(&conn, profile_id)?
+            .ok_or(CommandError::NotFound)?;
         (settings, profile)
     };
 

@@ -12,6 +12,8 @@ export default function Servers() {
   const setNotice = useAppStore((store) => store.setNotice);
   const tested = useAppStore((store) => store.probeTested);
   const total = useAppStore((store) => store.probeTotal);
+  const selectedProfileId = useAppStore((store) => store.selectedProfileId);
+  const setSelectedProfileId = useAppStore((store) => store.setSelectedProfileId);
 
   useEffect(() => {
     let active = true;
@@ -59,7 +61,11 @@ export default function Servers() {
         </div>
       </CardHeader>
       <CardContent>
-        <ServerTable profiles={profiles} />
+        <ServerTable
+          profiles={profiles}
+          selectedId={selectedProfileId}
+          onSelect={setSelectedProfileId}
+        />
       </CardContent>
     </Card>
   );
