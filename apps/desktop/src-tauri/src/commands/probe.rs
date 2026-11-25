@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 
 use rusqlite::Connection;
 use serde::Serialize;
+use serde_json::json;
 use tauri::State;
 use tokio::sync::watch;
 
@@ -230,8 +231,9 @@ pub async fn probe_run(state: State<'_, AppState>) -> Result<ProbeOutcome, Comma
 }
 
 /// Accept a stop request only while a probe cycle owns the probe permit.
-/// Flips the watch flag and returns `true`; the cycle emits `probe-cancelled`
-/// once when it observes the flag. Idle callers get `false` and no event.
+/// Flips the watch flag and returns `true`; `probe-cancelled` is emitted here
+/// exactly once, on the first accepted request of this cycle. Idle callers get
+/// `false` and no event.
 // Sync on purpose: Tauri rejects an async command with a borrowed `State`
 // unless it returns `Result`. The IPC payload stays a plain boolean.
 #[tauri::command]
@@ -239,7 +241,11 @@ pub fn probe_cancel(state: State<'_, AppState>) -> bool {
     if !state.inner.probe_running.load(Ordering::SeqCst) {
         return false;
     }
-    state.inner.probe_cancel_tx.send_replace(true);
+    // `send_replace` is atomic: racing stop requests emit at most one event.
+    let already_cancelled = state.inner.probe_cancel_tx.send_replace(true);
+    if !already_cancelled {
+        crate::state::emit("probe-cancelled", json!({}));
+    }
     true
 }
 

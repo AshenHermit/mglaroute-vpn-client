@@ -58,6 +58,7 @@ pub enum ProbeServerStatus {
     Testing,
     Done,
     Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -130,6 +131,7 @@ pub async fn run_probe_cycle(conn: &mut Connection, settings: &Settings) -> Resu
 /// SQLite mutex while xray is running; a stalled probe must never block
 /// unrelated reads such as `settings_get`. Up to `test_concurrency` profiles
 /// are probed in parallel; one bad profile never fails the whole cycle.
+/// Progress counts real samples only — cancelled profiles are excluded.
 pub async fn probe_cycle_detached(
     profiles: &[Profile],
     services: &[ServiceProfile],
@@ -147,7 +149,6 @@ pub async fn probe_cycle_detached(
     let limit = settings.test_concurrency.clamp(1, 20) as usize;
     let mut samples = Vec::with_capacity(total);
     let mut tested = 0usize;
-    let mut cancellation_sent = false;
 
     // Futures are lazy: building them all up front costs nothing and gives
     // `buffer_unordered` a concrete future type (no higher-ranked closure).
@@ -158,25 +159,16 @@ pub async fn probe_cycle_detached(
     let mut ordered = stream::iter(futures).buffer_unordered(limit);
 
     while let Some(result) = ordered.next().await {
-        if !cancellation_sent && *cancel.borrow() {
-            progress.on_cancelled();
-            cancellation_sent = true;
+        // Only `JobHandle::create()` can fail at cycle level; per-profile
+        // failures have already become failed samples in `tracked_probe`.
+        if let Some(sample) = result? {
+            samples.push(sample);
+            tested += 1;
+            progress.on_progress(tested, total);
         }
-        match result? {
-            Some(sample) => samples.push(sample),
-            None => {
-                if !cancellation_sent {
-                    progress.on_cancelled();
-                    cancellation_sent = true;
-                }
-            }
-        }
-        tested += 1;
-        progress.on_progress(tested, total);
     }
-    if !cancellation_sent && *cancel.borrow() {
-        progress.on_cancelled();
-    }
+    // `probe-cancelled` is emitted by `probe_cancel` when the stop is accepted,
+    // so a late cancel cannot race this loop and lose the event.
     Ok(samples)
 }
 
@@ -199,7 +191,10 @@ fn tracked_probe<'a>(
             latency_ms: None,
             service_results: Vec::new(),
         });
-        match transport
+        // Exactly one terminal event per started profile. A cancelled future
+        // gets `cancelled`; any per-profile error becomes a failed sample so a
+        // single bad core never aborts the cycle or discards prior samples.
+        let (sample, status) = match transport
             .probe_profile(profile, services, settings, ctx)
             .await
         {
@@ -209,17 +204,21 @@ fn tracked_probe<'a>(
                 } else {
                     ProbeServerStatus::Failed
                 };
-                progress.on_server(&ProbeServerEvent {
-                    profile_id,
-                    status,
-                    latency_ms: sample.latency_ms,
-                    service_results: sample.service_results.clone(),
-                });
-                Ok(Some(sample))
+                (Some(sample), status)
             }
-            Ok(None) => Ok(None),
-            Err(error) => Err(error),
-        }
+            Ok(None) => (None, ProbeServerStatus::Cancelled),
+            Err(_) => (Some(failed_sample(profile, services)), ProbeServerStatus::Failed),
+        };
+        progress.on_server(&ProbeServerEvent {
+            profile_id,
+            status,
+            latency_ms: sample.as_ref().and_then(|sample| sample.latency_ms),
+            service_results: sample
+                .as_ref()
+                .map(|sample| sample.service_results.clone())
+                .unwrap_or_default(),
+        });
+        Ok(sample)
     })
 }
 
@@ -363,10 +362,14 @@ impl ProbeProgress for TauriProgress {
     }
 }
 
-/// Reserve one distinct ephemeral loopback port without logging it.
-fn free_port() -> Result<u16> {
+/// Reserve one ephemeral loopback port without logging it. The listener is
+/// returned to the caller and kept bound while the config is prepared, so two
+/// concurrent futures cannot be handed the same port. It is released just
+/// before spawn so the core itself can bind.
+fn reserve_port() -> Result<(TcpListener, u16)> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-    Ok(listener.local_addr()?.port())
+    let port = listener.local_addr()?.port();
+    Ok((listener, port))
 }
 
 fn failed_sample(profile: &Profile, services: &[ServiceProfile]) -> ProbeSample {
@@ -383,6 +386,8 @@ fn failed_sample(profile: &Profile, services: &[ServiceProfile]) -> ProbeSample 
     }
 }
 
+/// One profile's core work. Every error here is local to the profile; the
+/// wrapper maps it to a failed sample. Cancellation stays `Ok(None)`.
 async fn probe_profile_with_core(
     profile: &Profile,
     services: &[ServiceProfile],
@@ -392,13 +397,20 @@ async fn probe_profile_with_core(
     if *ctx.cancel.borrow() {
         return Ok(None);
     }
+    match probe_core_once(profile, services, settings, ctx).await {
+        Ok(sample) => Ok(sample),
+        Err(_) => Ok(Some(failed_sample(profile, services))),
+    }
+}
 
-    let port = free_port()?;
-    // A profile with unusable credentials is one failed sample, not a cycle error.
-    let config = match build_probe_config(profile, port) {
-        Ok(config) => config,
-        Err(_) => return Ok(Some(failed_sample(profile, services))),
-    };
+async fn probe_core_once(
+    profile: &Profile,
+    services: &[ServiceProfile],
+    settings: &Settings,
+    ctx: ProbeContext<'_>,
+) -> Result<Option<ProbeSample>> {
+    let (listener, port) = reserve_port()?;
+    let config = build_probe_config(profile, port)?;
 
     let files = ProbeTempFiles::new()?;
     let config_json = serde_json::to_string(&config)?;
@@ -413,6 +425,9 @@ async fn probe_profile_with_core(
         config_path: files.config_path.clone(),
         anti_dpi: None,
     };
+    // The reservation ends here so xray can bind the port. It covered config
+    // preparation throughout, so a concurrent probe could not claim this port.
+    drop(listener);
     // The cycle's job owns this core tree; the command builder null-redirects
     // stdout/stderr so config bytes never reach a log.
     let mut guard = match ChildGuard::spawn(&snapshot, Some(ctx.job)) {
@@ -598,6 +613,22 @@ mod tests {
         }
     }
 
+    /// Every profile fails at the transport boundary (stand-in for a port
+    /// timeout, spawn failure or stopped core).
+    struct FailingTransport;
+
+    impl ProbeTransport for FailingTransport {
+        fn probe_profile<'a>(
+            &'a self,
+            _profile: &'a Profile,
+            _services: &'a [ServiceProfile],
+            _settings: &'a Settings,
+            _ctx: ProbeContext<'a>,
+        ) -> ProbeFutureOne<'a> {
+            Box::pin(async { Err(ProbeError::Io(std::io::Error::other("core failed"))) })
+        }
+    }
+
     struct RecordingProgress {
         servers: Mutex<Vec<ProbeServerEvent>>,
         progress: Mutex<Vec<(usize, usize)>>,
@@ -777,6 +808,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn per_profile_errors_become_failed_samples_without_aborting_cycle() {
+        let profiles: Vec<Profile> = (0..3)
+            .map(|index| {
+                test_profile(
+                    &format!("p-{index}"),
+                    &format!("srv-{index}"),
+                    index as i64,
+                )
+            })
+            .collect();
+        let services = vec![ServiceProfile {
+            id: "svc-1".to_string(),
+            name: "test-service".to_string(),
+            test_urls: json!(["https://service.test"]).to_string(),
+            is_enabled: true,
+            ..Default::default()
+        }];
+        let progress = RecordingProgress::new();
+        let (_tx, rx) = watch::channel(false);
+
+        let samples = probe_cycle_detached(
+            &profiles,
+            &services,
+            &Settings::default(),
+            &FailingTransport,
+            &progress,
+            rx,
+        )
+        .await
+        .expect("a failing profile must not abort the cycle");
+
+        assert_eq!(samples.len(), 3);
+        assert!(samples.iter().all(|sample| sample.latency_ms.is_none()));
+        assert!(
+            samples
+                .iter()
+                .all(|sample| sample.service_results.iter().all(|result| !result.reachable))
+        );
+        assert_eq!(
+            progress.progress.lock().expect("lock progress").last(),
+            Some(&(3, 3))
+        );
+        let events = progress.servers.lock().expect("lock servers");
+        for profile in &profiles {
+            let statuses: Vec<ProbeServerStatus> = events
+                .iter()
+                .filter(|event| event.profile_id == profile.id)
+                .map(|event| event.status.clone())
+                .collect();
+            assert_eq!(
+                statuses,
+                vec![ProbeServerStatus::Testing, ProbeServerStatus::Failed]
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn cancelled_cycle_persists_partial_samples_without_sorting() {
         let mut conn = seeded_conn();
         let profiles = profile_repo::list_present_enabled(&conn).expect("list enabled");
@@ -817,10 +905,32 @@ mod tests {
         assert!(outcome.cancelled);
         assert_eq!(sort_indices(&conn), before, "sort must be skipped");
         assert_eq!(
-            progress.cancelled.load(Ordering::SeqCst),
-            1,
-            "cancelled event must fire once"
+            progress.progress.lock().expect("lock progress").as_slice(),
+            &[(1, 3)],
+            "progress counts real samples only"
         );
+        assert_eq!(
+            progress.cancelled.load(Ordering::SeqCst),
+            0,
+            "the cycle must not emit probe-cancelled; probe_cancel does"
+        );
+
+        let events = progress.servers.lock().expect("lock servers");
+        let tested_id = profiles.first().expect("at least one profile").id.clone();
+        for profile in &profiles {
+            let statuses: Vec<ProbeServerStatus> = events
+                .iter()
+                .filter(|event| event.profile_id == profile.id)
+                .map(|event| event.status.clone())
+                .collect();
+            let expected = if profile.id == tested_id {
+                vec![ProbeServerStatus::Testing, ProbeServerStatus::Done]
+            } else {
+                vec![ProbeServerStatus::Testing, ProbeServerStatus::Cancelled]
+            };
+            assert_eq!(statuses, expected, "every started profile needs a terminal event");
+        }
+        drop(events);
 
         let started = transport.started.lock().expect("lock started");
         assert_eq!(started.len(), 1, "only one core was started");

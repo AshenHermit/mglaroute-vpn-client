@@ -175,6 +175,14 @@ describe("contract schemas", () => {
       latencyMs: 12,
       serviceResults: [{ serviceProfileId: "svc-1", reachable: true }],
     });
+    expect(
+      ProbeServerEventSchema.parse({
+        profileId: "p-2",
+        status: "cancelled",
+        latencyMs: null,
+        serviceResults: [],
+      }).status,
+    ).toBe("cancelled");
 
     expect(SettingsPatchSchema.parse({ autoTestEnabled: false })).toEqual({
       autoTestEnabled: false,

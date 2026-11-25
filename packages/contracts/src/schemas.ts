@@ -102,7 +102,7 @@ export const ProbeServiceResultSchema = z.object({
 
 export const ProbeServerEventSchema = z.object({
   profileId: z.string(),
-  status: z.enum(["testing", "done", "failed"]),
+  status: z.enum(["testing", "done", "failed", "cancelled"]),
   latencyMs: z.number().int().nullable(),
   serviceResults: z.array(ProbeServiceResultSchema),
 });

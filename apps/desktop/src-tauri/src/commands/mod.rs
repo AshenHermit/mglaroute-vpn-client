@@ -260,8 +260,8 @@ impl AppState {
         self.inner.probe_cancel_tx.subscribe()
     }
 
-    /// End a cycle. No event is emitted here: `probe-cancelled` belongs to the
-    /// cycle that observed the flag.
+    /// End a cycle. `probe-cancelled` is emitted by `probe_cancel` when the
+    /// stop is accepted, never by the cycle or by this method.
     pub fn finish_probe(&self) {
         self.inner.probe_running.store(false, Ordering::SeqCst);
     }
