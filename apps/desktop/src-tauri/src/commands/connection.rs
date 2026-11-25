@@ -37,11 +37,13 @@ pub(crate) async fn connect_impl(
     }
     let exclusions = exclusions(&settings);
 
-    // A switch while connected must first give up ownership of the old
-    // connection. Keep child/previous/config in runtime until both stop and
-    // restore succeed: on failure they remain recoverable (and the child is
-    // never orphaned). Stopping and restoring first also means the proxy read
-    // below is the user's original state, not our own local proxy.
+    // A switch keeps the ownership taken at connect: the applied local proxy
+    // and the user's original state stay in place. Restoring here would send
+    // browser traffic direct (or to the old user proxy) while the replacement
+    // core starts; `wait_for_port` allows a two-second leak window on every
+    // probe-triggered switch. Give up ownership only when the system proxy was
+    // turned off since connect. On failure the previous state stays owned and
+    // recoverable, and a child whose stop failed stays owned (never orphaned).
     let stopped = {
         let mut runtime = state.inner.runtime.lock().await;
         stop_child(&mut runtime.child)
@@ -51,21 +53,27 @@ pub(crate) async fn connect_impl(
         return Err(CommandError::Core);
     }
 
-    let old_previous = state.inner.runtime.lock().await.previous.clone();
-    if let Some(previous) = old_previous {
-        let mut restored = false;
-        for _ in 0..2 {
-            let runtime = state.inner.runtime.lock().await;
-            if runtime.proxy.restore(&previous).is_ok() {
-                restored = true;
-                break;
+    let owned_previous = state.inner.runtime.lock().await.previous.clone();
+    let previous = match owned_previous {
+        Some(previous) if !settings.system_proxy_enabled => {
+            let mut restored = false;
+            for _ in 0..2 {
+                let runtime = state.inner.runtime.lock().await;
+                if runtime.proxy.restore(&previous).is_ok() {
+                    restored = true;
+                    break;
+                }
             }
+            if !restored {
+                mark_faulted(state).await;
+                return Err(CommandError::Proxy);
+            }
+            None
         }
-        if !restored {
-            mark_faulted(state).await;
-            return Err(CommandError::Proxy);
-        }
-    }
+        // `Some(previous)` is carried forward untouched; `None` is captured
+        // from the user's state after the new core is ready.
+        other => other,
+    };
 
     let old_config = {
         let mut runtime = state.inner.runtime.lock().await;
@@ -125,33 +133,40 @@ pub(crate) async fn connect_impl(
     }
 
     let previous = if settings.system_proxy_enabled {
-        let current = {
-            let runtime = state.inner.runtime.lock().await;
-            runtime.proxy.current()
-        };
-        match current {
-            Ok(current) => {
-                let applied = {
-                    let runtime = state.inner.runtime.lock().await;
-                    runtime.proxy.apply(port, &exclusions)
-                };
-                if applied.is_err() {
+        // Reuse the capture from the first connect. Calling `current()` on a
+        // switch would read our own local proxy and leak it on disconnect.
+        let captured = if previous.is_some() {
+            None
+        } else {
+            let current = {
+                let runtime = state.inner.runtime.lock().await;
+                runtime.proxy.current()
+            };
+            match current {
+                Ok(current) => Some(current),
+                Err(_) => {
                     stop_child(&mut child);
                     remove_config(&Some(snapshot.config_path.clone()));
                     mark_faulted(state).await;
                     return Err(CommandError::Proxy);
                 }
-                Some(current)
             }
-            Err(_) => {
-                stop_child(&mut child);
-                remove_config(&Some(snapshot.config_path.clone()));
-                mark_faulted(state).await;
-                return Err(CommandError::Proxy);
-            }
+        };
+        // Re-apply only after the replacement core is ready. The applied state
+        // is unchanged across a switch with the same port/exclusions.
+        let applied = {
+            let runtime = state.inner.runtime.lock().await;
+            runtime.proxy.apply(port, &exclusions)
+        };
+        if applied.is_err() {
+            stop_child(&mut child);
+            remove_config(&Some(snapshot.config_path.clone()));
+            mark_faulted(state).await;
+            return Err(CommandError::Proxy);
         }
+        previous.or(captured)
     } else {
-        None
+        previous
     };
 
     let mut runtime = state.inner.runtime.lock().await;

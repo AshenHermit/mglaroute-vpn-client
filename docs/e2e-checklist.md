@@ -76,13 +76,15 @@ Windows registry run; **network** = needs live subscription/test URLs. All steps
    as-is.
 
 8. **Auto-refetch tick updates `last_fetched_at`.** (binary, Windows, network)
-   On **Settings** enable **Auto refetch enabled**, set **Refetch interval
-   (minutes)** to `1`, and save. Wait for two 60 s scheduler ticks.
+   On **Settings** enable **Auto refetch enabled** and save. On **Subscriptions**
+   keep the feed **Enabled** and set its **Refetch interval for <name> (minutes)**
+   to `1` (blur to save). Wait for two 60 s scheduler ticks.
    Expected: on the first eligible tick the subscription is fetched, its
    `last_fetched_at` advances (visible in `subscriptions` in `client.db` and in
    the `subscription-refreshed` event), profiles are upserted, and a refresh
-   before the interval elapses is skipped. Default interval is 15 minutes and
-   per-subscription `auto_refetchMinutes=0` disables refetch for that row.
+   before the interval elapses is skipped. New subscriptions default to 15
+   minutes; interval `0` disables refetch for that row. The old global
+   "Refetch interval (minutes)" field was removed: cadence is per subscription.
 
 9. **Cooldown blocks rapid reconnect.** (binary, Windows, network)
    On **Settings** enable **Auto test enabled** and **Auto reconnect enabled**,

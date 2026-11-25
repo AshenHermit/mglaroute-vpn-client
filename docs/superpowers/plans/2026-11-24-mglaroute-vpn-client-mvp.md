@@ -549,7 +549,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement UI**
 
-Zustand stores hold UI/selection only; durable data comes from commands, never `persist` for subscription URLs or raw configs. Tailwind + shadcn-style Radix wrappers. Keep settings form fields exactly: `auto_refetch_enabled`, `refetch_interval_minutes`, `auto_test_enabled`, `test_interval_minutes`, `test_timeout_ms`, `auto_reconnect_enabled`, `reconnect_cooldown_seconds`, `ping_url`, `local_proxy_port`, `proxy_exclusions`, `system_proxy_enabled`.
+Zustand stores hold UI/selection only; durable data comes from commands, never `persist` for subscription URLs or raw configs. Tailwind + shadcn-style Radix wrappers. Keep settings form fields exactly: `auto_refetch_enabled`, `auto_test_enabled`, `test_interval_minutes`, `test_timeout_ms`, `auto_reconnect_enabled`, `reconnect_cooldown_seconds`, `ping_url`, `local_proxy_port`, `proxy_exclusions`, `system_proxy_enabled`. `refetch_interval_minutes` stays in the settings contract/storage but is not a form field: cadence is per subscription (`autoRefetchMinutes`, default 15).
 
 - [ ] **Step 4: Run tests to verify pass**
 

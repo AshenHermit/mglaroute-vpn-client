@@ -45,7 +45,10 @@ docs/superpowers/specs/   design docs
 1. Desktop app (Windows) with import of subscriptions by URL.
 2. Online-service profiles: named list of test URLs, add/edit/delete/enable/disable.
    Mirrors server entity: `name` (unique), `testUrls[]`, `isEnabled`, `isDefault`.
-3. Per-subscription activation/deactivation + periodic auto-refetch.
+3. Per-subscription activation/deactivation + periodic auto-refetch. Subscription
+   rows expose enable switch + per-row refetch interval (minutes) via
+   `subscription_update`; fresh rows default to 15. Global settings
+   `refetchIntervalMinutes` remains in storage/contract but is not shown in UI.
 4. Periodic auto-test: real delay per server + reachability of all URLs of each active
    service profile through the same proxy; auto-sort by delay (failed last).
 5. Auto-reconnect: after each test cycle switch to best server if current is not best,
@@ -73,7 +76,8 @@ docs/superpowers/specs/   design docs
 
 ## Verification
 
-- `pnpm test`, `pnpm build`: set `NX_DAEMON='false'` (Nx daemon disconnect flake).
+- `pnpm test` runs Nx projects plus `vitest run scripts` (sha256/asset suites);
+  exit code is meaningful. `pnpm build`: set `NX_DAEMON='false'` (Nx daemon flake).
   `Cannot switch to pnpm@9` and zod annotation warnings are pre-existing.
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: plain command
   needs a bundled binary (tauri-build validates `externalBin`). Tests use a fake

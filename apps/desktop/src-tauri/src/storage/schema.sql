@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     url TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'inactive' CHECK (status IN ('active', 'inactive', 'error')),
-    auto_refetch_minutes INTEGER NOT NULL DEFAULT 0,
+    auto_refetch_minutes INTEGER NOT NULL DEFAULT 15,
     last_fetched_at TEXT,
     last_error TEXT,
     user_agent TEXT,

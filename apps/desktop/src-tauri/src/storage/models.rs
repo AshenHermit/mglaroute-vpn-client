@@ -1,6 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Per-subscription refetch cadence assigned on add. `0` disables a row, so a
+/// fresh subscription must start above zero for periodic refetch to work.
+pub const DEFAULT_REFETCH_MINUTES: i64 = 15;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Subscription {
     pub id: String,
@@ -27,7 +31,7 @@ impl Default for Subscription {
             url: String::new(),
             enabled: true,
             status: "inactive".to_string(),
-            auto_refetch_minutes: 0,
+            auto_refetch_minutes: DEFAULT_REFETCH_MINUTES,
             last_fetched_at: None,
             last_error: None,
             user_agent: None,
@@ -147,5 +151,19 @@ impl Default for Settings {
             proxy_exclusions: "[]".to_string(),
             system_proxy_enabled: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_subscription_has_usable_refetch_interval() {
+        assert!(
+            Subscription::default().auto_refetch_minutes > 0,
+            "a fresh subscription must be eligible for periodic refetch"
+        );
+        assert_eq!(DEFAULT_REFETCH_MINUTES, 15);
     }
 }

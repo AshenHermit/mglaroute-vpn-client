@@ -13,8 +13,9 @@ type BooleanField =
   | "autoReconnectEnabled"
   | "systemProxyEnabled";
 
+// `refetchIntervalMinutes` stays in the settings contract/storage but is not
+// surfaced here: refetch cadence is per subscription (`autoRefetchMinutes`).
 type NumberField =
-  | "refetchIntervalMinutes"
   | "testIntervalMinutes"
   | "testTimeoutMs"
   | "reconnectCooldownSeconds"
@@ -97,11 +98,6 @@ export function SettingsForm() {
             onCheckedChange={toggle("systemProxyEnabled")}
           />
 
-          <NumberInput
-            label="Refetch interval (minutes)"
-            value={form.refetchIntervalMinutes}
-            onChange={setNumber("refetchIntervalMinutes")}
-          />
           <NumberInput
             label="Test interval (minutes)"
             value={form.testIntervalMinutes}

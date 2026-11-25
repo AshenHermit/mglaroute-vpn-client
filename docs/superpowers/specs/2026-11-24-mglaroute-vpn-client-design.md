@@ -95,6 +95,9 @@
   `ProxyOverride`, и в xray routing bypass.
 - **`format=json` feed** в MVP не импортируется; только `format=subscription`.
 - **Scheduler gate:** `auto_refetch_enabled` AND `subscription.auto_refetch_minutes>0`.
+  Интервал задаётся на каждой строке подписки через `subscription_update`;
+  новые подписки получают 15 минут. Глобальное `refetch_interval_minutes`
+  хранится в `settings`, но в UI не показывается и планировщиком не читается.
   `is_default` у service profile — только маркер сида; не делает профиль
   обязательным, не включает его автоматически и не запрещает удаление.
 

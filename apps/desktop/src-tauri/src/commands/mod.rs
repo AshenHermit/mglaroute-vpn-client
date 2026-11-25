@@ -428,7 +428,7 @@ pub async fn auto_test_loop(state: AppState) {
 #[cfg(test)]
 mod tests {
     use std::net::TcpListener;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -525,6 +525,51 @@ mod tests {
 
         fn restore(&self, _previous: &PreviousProxy) -> std::result::Result<(), ProxyError> {
             Err(ProxyError::Unsupported)
+        }
+    }
+
+    /// Observes restore calls and shares state with the launcher so a switch
+    /// can be inspected while the replacement core is starting.
+    struct SharedProxy {
+        inner: Arc<InMemoryProxy>,
+        restores: Arc<AtomicUsize>,
+    }
+
+    impl ProxyBackend for SharedProxy {
+        fn current(&self) -> std::result::Result<PreviousProxy, ProxyError> {
+            self.inner.current()
+        }
+
+        fn apply(&self, port: u16, exclusions: &[String]) -> std::result::Result<(), ProxyError> {
+            self.inner.apply(port, exclusions)
+        }
+
+        fn restore(&self, previous: &PreviousProxy) -> std::result::Result<(), ProxyError> {
+            self.restores.fetch_add(1, Ordering::SeqCst);
+            self.inner.restore(previous)
+        }
+    }
+
+    #[derive(Clone)]
+    struct SamplingLauncher {
+        stopped: Arc<AtomicBool>,
+        proxy: Arc<InMemoryProxy>,
+        samples: Arc<std::sync::Mutex<Vec<PreviousProxy>>>,
+    }
+
+    impl CoreLauncher for SamplingLauncher {
+        fn launch(
+            &self,
+            _snapshot: &ConfigSnapshot,
+        ) -> std::result::Result<Box<dyn CoreHandle>, String> {
+            self.samples
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(self.proxy.state());
+            Ok(Box::new(FakeHandle {
+                exited: false,
+                stopped: self.stopped.clone(),
+            }))
         }
     }
 
@@ -861,7 +906,7 @@ mod tests {
         assert_eq!(
             runtime.previous.as_ref(),
             Some(&original),
-            "original proxy must be recaptured, not our own proxy"
+            "original proxy must stay owned, not be replaced with our own proxy"
         );
         assert_eq!(runtime.connection.status, ConnectionStatus::Connected);
         assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-best"));
@@ -870,6 +915,72 @@ mod tests {
             override_list: override_string(&[]),
         });
         assert!(runtime.child.is_some());
+    }
+
+    #[tokio::test]
+    async fn switch_keeps_local_proxy_applied() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        // ProxyEnable=0 analogue: the machine is direct before connecting.
+        let original = PreviousProxy::Direct;
+        let proxy = Arc::new(InMemoryProxy::new(original.clone()));
+        let restores = Arc::new(AtomicUsize::new(0));
+        let samples = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(SharedProxy {
+                inner: proxy.clone(),
+                restores: restores.clone(),
+            }),
+            Box::new(SamplingLauncher {
+                stopped: stopped.clone(),
+                proxy: proxy.clone(),
+                samples: samples.clone(),
+            }),
+        );
+        prepare_connected(&state, "p-1", original.clone(), port, stopped.clone(), false).await;
+
+        {
+            let _permit = state.permit().expect("permit");
+            connect_impl(&state, Some("p-best".to_string()))
+                .await
+                .expect("switch");
+        }
+
+        let local = PreviousProxy::Manual {
+            server: proxy_string(port),
+            override_list: override_string(&[]),
+        };
+        assert_eq!(
+            restores.load(Ordering::SeqCst),
+            0,
+            "switch must not restore the user's original proxy"
+        );
+        let observed = samples
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        assert!(!observed.is_empty(), "launcher must sample proxy state");
+        assert!(
+            observed.iter().all(|value| value == &local),
+            "proxy must stay pointed at the local proxy across the switch: {observed:?}"
+        );
+        let runtime = state.inner.runtime.lock().await;
+        assert_eq!(runtime.proxy.current().expect("current proxy"), local);
+        assert_eq!(
+            runtime.previous.as_ref(),
+            Some(&original),
+            "original state must stay owned across the switch"
+        );
     }
 
     #[tokio::test]
@@ -1086,14 +1197,16 @@ mod tests {
         }
         assert!(config_path.exists(), "old config must remain for recovery");
 
-        // Failed restore: previous proxy and config stay recoverable.
+        // Failed restore: previous proxy and config stay recoverable. A switch
+        // with the system proxy disabled is the only switch that restores; a
+        // switch with it enabled keeps the local proxy applied (no leak).
         let dir = tempfile::tempdir().expect("tempdir");
         let conn = conn_with_profiles();
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
         let port = listener.local_addr().expect("local addr").port();
         let mut settings = settings_repo::get(&conn).expect("settings");
         settings.local_proxy_port = i64::from(port);
-        settings.system_proxy_enabled = true;
+        settings.system_proxy_enabled = false;
         settings_repo::update(&conn, &settings).expect("update settings");
 
         let state = AppState::new(
