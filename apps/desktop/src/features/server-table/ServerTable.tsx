@@ -24,45 +24,47 @@ export function ServerTable({ profiles }: { profiles: Profile[] }) {
   });
 
   return (
-    <Table>
-      <TableHead>
-        <TableRow>
-          <TableHeaderCell>Server</TableHeaderCell>
-          <TableHeaderCell>Protocol</TableHeaderCell>
-          <TableHeaderCell>Address</TableHeaderCell>
-          <TableHeaderCell>Delay</TableHeaderCell>
-          <TableHeaderCell>State</TableHeaderCell>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {sorted.length === 0 ? (
+    <div className="w-full min-w-0 overflow-x-auto">
+      <Table className="table-fixed">
+        <TableHead>
           <TableRow>
-            <TableCell colSpan={5} className="text-slate-500">
-              No servers yet. Import a subscription and run a test.
-            </TableCell>
+            <TableHeaderCell className="w-2/5">Server</TableHeaderCell>
+            <TableHeaderCell>Protocol</TableHeaderCell>
+            <TableHeaderCell>Address</TableHeaderCell>
+            <TableHeaderCell>Delay</TableHeaderCell>
+            <TableHeaderCell>State</TableHeaderCell>
           </TableRow>
-        ) : (
-          sorted.map((profile) => {
-            const failed = isFailed(profile);
-            return (
-              <TableRow
-                key={profile.id}
-                data-testid="server-row"
-                data-profile-id={profile.id}
-                className={failed ? "opacity-60 text-gray-500" : ""}
-              >
-                <TableCell>{profile.remarks ?? profile.serverId}</TableCell>
-                <TableCell>{profile.protocol ?? "—"}</TableCell>
-                <TableCell>{profile.address ?? "—"}</TableCell>
-                <TableCell>
-                  {failed ? "—" : `${profile.latencyMs} ms`}
-                </TableCell>
-                <TableCell>{failed ? "failed" : "ok"}</TableCell>
-              </TableRow>
-            );
-          })
-        )}
-      </TableBody>
-    </Table>
+        </TableHead>
+        <TableBody>
+          {sorted.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-slate-500">
+                No servers yet. Import a subscription and run a test.
+              </TableCell>
+            </TableRow>
+          ) : (
+            sorted.map((profile) => {
+              const failed = isFailed(profile);
+              return (
+                <TableRow
+                  key={profile.id}
+                  data-testid="server-row"
+                  data-profile-id={profile.id}
+                  className={failed ? "opacity-60 text-gray-500" : ""}
+                >
+                  <TableCell className="break-words">
+                    {profile.remarks ?? profile.serverId}
+                  </TableCell>
+                  <TableCell className="break-words">{profile.protocol ?? "—"}</TableCell>
+                  <TableCell className="break-words">{profile.address ?? "—"}</TableCell>
+                  <TableCell>{failed ? "—" : `${profile.latencyMs} ms`}</TableCell>
+                  <TableCell>{failed ? "failed" : "ok"}</TableCell>
+                </TableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

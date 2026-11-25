@@ -66,7 +66,8 @@ pub fn wait_for_port(port: u16, timeout: Duration) -> Result<()> {
     }
 }
 
-/// Owns a spawned xray child and reaps it on `stop`.
+/// Owns a spawned xray child and reaps it on `stop`. `Drop` is a backstop for
+/// panics/early returns that skip `stop`: no child is left behind on shutdown.
 ///
 /// Follow-up: wrap the child in a Windows Job Object so grandchild processes
 /// are killed too; not required for MVP.
@@ -101,6 +102,15 @@ impl ChildGuard {
         waited?;
         killed?;
         Ok(())
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        // Never propagate from a destructor; `stop()` remains the explicit,
+        // error-reporting path. This covers panics and forgotten `stop()`.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 

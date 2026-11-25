@@ -336,9 +336,9 @@ pub async fn child_exit_watch(state: AppState) {
     }
 }
 
-/// Stops the child, retrying once. `ChildGuard` has no `Drop`, so a handle
-/// whose stop failed is put back into `child` instead of being dropped — the
-/// caller stays responsible for retrying and no process is orphaned.
+/// Stops the child, retrying once. A handle whose stop failed is put back into
+/// `child` so the caller can retry; `ChildGuard`'s `Drop` is only a panic/early-
+/// return backstop that kills the process if the handle is truly dropped.
 fn stop_child(child: &mut Option<Box<dyn CoreHandle>>) -> bool {
     let Some(mut handle) = child.take() else {
         return true;

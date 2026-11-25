@@ -8,7 +8,9 @@ use tauri::State;
 
 use super::connection::{connect_impl, disconnect_impl};
 use super::{AppState, CommandError, ConnectionStatus};
-use crate::probe::cycle::{run_probe_cycle, ProbeOutcome};
+use crate::probe::cycle::{
+    persist_probe_samples, probe_cycle_detached, ProbeOutcome, TauriProgress, XrayProbeTransport,
+};
 use crate::reconnect::{decide_reconnect, ReconnectDecision};
 use crate::storage::models::{Profile, Settings};
 use crate::storage::repos::{profile_repo, service_profile_repo, settings_repo};
@@ -163,14 +165,30 @@ pub(crate) async fn apply_reconnect(
 /// last-switch timestamp is recorded here after a successful switch — the pure
 /// `decide_reconnect` function owns neither.
 pub(crate) async fn run_impl(state: &AppState) -> Result<ProbeOutcome, CommandError> {
-    let settings = {
+    // Read inputs in a short lock scope. The probe itself can take seconds per
+    // server; holding the shared SQLite mutex across it makes `settings_get`
+    // block forever and leaves the Settings UI on "Loading settings…".
+    let (settings, profiles, services) = {
         let conn = state.inner.conn.lock().await;
-        settings_repo::get(&conn)?
+        (
+            settings_repo::get(&conn)?,
+            profile_repo::list_present_enabled(&conn)?,
+            service_profile_repo::list_enabled(&conn)?,
+        )
     };
+
+    let samples = probe_cycle_detached(
+        &profiles,
+        &services,
+        &settings,
+        &XrayProbeTransport,
+        &TauriProgress,
+    )
+    .await?;
 
     let outcome = {
         let mut conn = state.inner.conn.lock().await;
-        run_probe_cycle(&mut conn, &settings).await?
+        persist_probe_samples(&mut conn, &samples, &TauriProgress)?
     };
 
     if settings.auto_reconnect_enabled {

@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ServerTable } from "../features/server-table/ServerTable";
-import { invoke } from "../lib/invoke";
+import { commandErrorCode, invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
 
 export default function Servers() {
@@ -33,8 +33,15 @@ export default function Servers() {
       const rows = await invoke("profile_list", ProfileSchema.array());
       setProfiles(rows);
       setNotice(`Tested ${result.tested} servers`);
-    } catch {
-      setNotice("Could not run server test");
+    } catch (error) {
+      const code = commandErrorCode(error);
+      if (code === "busy") {
+        setNotice("Another operation is in progress. Try again shortly.");
+      } else if (code === "probe") {
+        setNotice("Server test failed. Check xray and the network, then retry.");
+      } else {
+        setNotice("Could not run server test");
+      }
     }
   };
 

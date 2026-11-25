@@ -54,4 +54,14 @@ describe("ServerTable", () => {
     expect(rows[3].textContent).toContain("failed");
     expect(rows[3].className).toContain("opacity-60");
   });
+
+  it("keeps long server names inside a scrollable table area", () => {
+    const { container } = render(
+      <ServerTable profiles={[profile("p-1", 10, true, 0)]} />,
+    );
+
+    expect(container.querySelector("div.overflow-x-auto")).toBeTruthy();
+    expect(container.querySelector("table")?.className).toContain("table-fixed");
+    expect(container.querySelectorAll("td.break-words").length).toBeGreaterThan(0);
+  });
 });

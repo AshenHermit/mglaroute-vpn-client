@@ -120,9 +120,44 @@ fn split_host_port(authority: &str) -> Option<(String, u16)> {
     Some((host.to_string(), port.parse::<u16>().ok()?))
 }
 
+/// Decode `%XX` escapes in server remarks. Fragments treat `+` literally, so
+/// this deliberately does not perform form-style `+` → space conversion.
+/// Invalid escapes or invalid UTF-8 leave the original text untouched.
+pub(crate) fn percent_decode(input: &str) -> String {
+    if !input.contains('%') {
+        return input.to_string();
+    }
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            {
+                decoded.push((high << 4) | low);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| input.to_string())
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn split_fragment(input: &str) -> (&str, String) {
     match input.split_once('#') {
-        Some((head, remarks)) => (head, remarks.to_string()),
+        Some((head, remarks)) => (head, percent_decode(remarks)),
         None => (input, String::new()),
     }
 }
@@ -157,11 +192,7 @@ fn parse_vmess(encoded: &str, link: &str) -> Option<ParsedProfile> {
         Value::Number(port) => u16::try_from(port.as_u64()?).ok()?,
         _ => return None,
     };
-    let remarks = object
-        .get("ps")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+    let remarks = percent_decode(object.get("ps").and_then(Value::as_str).unwrap_or(""));
 
     let mut config = Map::new();
     for key in VMESS_FIELDS {
@@ -385,5 +416,20 @@ mod tests {
         assert_eq!(outcome.bad_lines, 0);
         assert_eq!(outcome.profiles.len(), 1);
         assert_eq!(outcome.profiles[0].link, link);
+    }
+
+    #[test]
+    fn decode_percent_encoded_remarks() {
+        let encoded = "%F0%9F%87%B8%F0%9F%87%AA%20Sweden%2C%20Stockholm%20%7C%20%5BBL%5D";
+        let p = decode_one(&format!("vless://id@example.com:443#{encoded}"));
+        assert_eq!(p.remarks, "🇸🇪 Sweden, Stockholm | [BL]");
+    }
+
+    #[test]
+    fn percent_decode_keeps_literal_plus_and_bad_escapes() {
+        assert_eq!(percent_decode("A+B"), "A+B");
+        assert_eq!(percent_decode("100%ZZ"), "100%ZZ");
+        assert_eq!(percent_decode("%E0%A4%A"), "%E0%A4%A");
+        assert_eq!(percent_decode("%FF"), "%FF");
     }
 }

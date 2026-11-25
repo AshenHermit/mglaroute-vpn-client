@@ -44,4 +44,20 @@ describe("SettingsForm", () => {
       ),
     );
   });
+
+  it("offers retry instead of hanging on settings load failure", async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error("boom"));
+    render(<SettingsForm />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Could not load settings. Try again once other operations finish.",
+    );
+    expect(screen.queryByText("Loading settings…")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(
+      await screen.findByRole("switch", { name: /auto refetch/i }),
+    ).toBeTruthy();
+  });
 });

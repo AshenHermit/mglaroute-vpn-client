@@ -1,22 +1,37 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EVENTS } from "@mglaroute/contracts";
 
-vi.mock("../../lib/invoke", () => ({ invoke: vi.fn() }));
+vi.mock("../../lib/invoke", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/invoke")>();
+  return { ...actual, invoke: vi.fn() };
+});
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 
-import { invoke } from "../../lib/invoke";
+import { CommandInvocationError, invoke } from "../../lib/invoke";
 import { listen } from "@tauri-apps/api/event";
+import { useAppStore } from "../../stores/app.store";
+import { disconnected, useConnectionStore } from "../../stores/connection.store";
 import { ConnectionPanel } from "./ConnectionPanel";
 
 const mockedInvoke = vi.mocked(invoke);
 const mockedListen = vi.mocked(listen);
 
 describe("ConnectionPanel", () => {
+  afterEach(() => cleanup());
   beforeEach(() => {
     vi.clearAllMocks();
+    useConnectionStore.getState().setState(disconnected);
+    useAppStore.getState().setNotice(null);
     mockedInvoke.mockResolvedValue({
       status: "disconnected",
       profileId: null,
@@ -55,5 +70,28 @@ describe("ConnectionPanel", () => {
 
     expect(screen.getByText("Connected")).toBeTruthy();
     expect(screen.getByText(/10808/)).toBeTruthy();
+  });
+
+  it("keeps state intact when connect is rejected as busy", async () => {
+    const { getByRole, queryByText, getByTestId } = render(<ConnectionPanel />);
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "connection_status",
+        expect.anything(),
+      ),
+    );
+
+    mockedInvoke.mockRejectedValueOnce(
+      new CommandInvocationError("connection_connect", "busy"),
+    );
+    fireEvent.click(getByRole("button", { name: "Connect" }));
+
+    await waitFor(() =>
+      expect(useAppStore.getState().notice).toBe(
+        "Another operation is in progress. Try again shortly.",
+      ),
+    );
+    expect(queryByText("Connection faulted. Reconnect to continue.")).toBeNull();
+    expect(getByTestId("connection-status").textContent).toBe("Disconnected");
   });
 });

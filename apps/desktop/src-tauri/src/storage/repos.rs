@@ -50,7 +50,9 @@ fn profile_from_row(row: &Row<'_>) -> Result<Profile> {
         subscription_id: row.get("subscription_id")?,
         server_id: row.get("server_id")?,
         link: row.get("link")?,
-        remarks: row.get("remarks")?,
+        remarks: row
+            .get::<_, Option<String>>("remarks")?
+            .map(|value| crate::subscription::decode::percent_decode(&value)),
         protocol: row.get("protocol")?,
         address: row.get("address")?,
         port: row.get("port")?,
@@ -547,6 +549,25 @@ mod tests {
         assert!(profiles[0].reachable);
         assert_eq!(profiles[0].checked_at, Some(checked_at));
         assert_eq!(profiles[0].raw_config, "{\"port\":2}");
+    }
+
+    #[test]
+    fn list_decodes_percent_encoded_remarks() {
+        let conn = test_conn();
+        subscription_repo::insert(&conn, &test_subscription("sub-1")).expect("insert subscription");
+
+        let mut profile = test_profile("sub-1", "server-1", "{}");
+        profile.remarks = Some(
+            "%F0%9F%87%B8%F0%9F%87%AA%20Sweden%2C%20Stockholm%20%7C%20%5BBL%5D".to_string(),
+        );
+        profile_repo::upsert_many(&conn, &[profile]).expect("insert profile");
+
+        let profiles = profile_repo::list_present(&conn).expect("list profiles");
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(
+            profiles[0].remarks.as_deref(),
+            Some("🇸🇪 Sweden, Stockholm | [BL]")
+        );
     }
 
     #[test]

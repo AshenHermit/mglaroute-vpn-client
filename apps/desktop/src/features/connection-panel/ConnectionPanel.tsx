@@ -2,7 +2,7 @@ import { ConnectionStateSchema } from "@mglaroute/contracts";
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { invoke } from "../../lib/invoke";
+import { commandErrorCode, invoke } from "../../lib/invoke";
 import { useAppStore } from "../../stores/app.store";
 import { useConnectionEvents, useConnectionStore } from "../../stores/connection.store";
 
@@ -42,7 +42,13 @@ export function ConnectionPanel() {
         profileId: null,
       });
       setState(next);
-    } catch {
+    } catch (error) {
+      // A concurrent probe holds the mutation permit. Report that distinctly
+      // and keep the real connection state; it is not a connection fault.
+      if (commandErrorCode(error) === "busy") {
+        setNotice("Another operation is in progress. Try again shortly.");
+        return;
+      }
       setState({ status: "faulted", profileId: null, proxyPort: null });
       setNotice("Connection failed");
     } finally {
@@ -55,7 +61,11 @@ export function ConnectionPanel() {
     try {
       const next = await invoke("connection_disconnect", ConnectionStateSchema);
       setState(next);
-    } catch {
+    } catch (error) {
+      if (commandErrorCode(error) === "busy") {
+        setNotice("Another operation is in progress. Try again shortly.");
+        return;
+      }
       setState({ status: "faulted", profileId: null, proxyPort: null });
       setNotice("Disconnect failed");
     } finally {

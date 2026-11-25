@@ -27,20 +27,38 @@ export function SettingsForm() {
   const setSettings = useAppStore((store) => store.setSettings);
   const setNotice = useAppStore((store) => store.setNotice);
   const [form, setForm] = useState<Settings | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     let active = true;
     void invoke("settings_get", SettingsSchema)
       .then((settings) => {
-        if (active) setForm(settings);
+        if (active) {
+          setForm(settings);
+          setLoadFailed(false);
+        }
       })
       .catch(() => {
-        if (active) setNotice("Could not load settings");
+        if (active) {
+          setLoadFailed(true);
+          setNotice("Could not load settings");
+        }
       });
     return () => {
       active = false;
     };
   }, [setNotice]);
+
+  const reload = () => {
+    setLoadFailed(false);
+    setForm(null);
+    void invoke("settings_get", SettingsSchema)
+      .then((settings) => setForm(settings))
+      .catch(() => {
+        setLoadFailed(true);
+        setNotice("Could not load settings");
+      });
+  };
 
   const persist = async (patch: SettingsPatch) => {
     try {
@@ -51,6 +69,24 @@ export function SettingsForm() {
       setNotice("Could not save settings");
     }
   };
+
+  if (loadFailed) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Settings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p role="alert" className="text-sm text-red-700">
+            Could not load settings. Try again once other operations finish.
+          </p>
+          <Button className="mt-3" onClick={reload}>
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!form) {
     return <p className="text-sm text-slate-500">Loading settings…</p>;

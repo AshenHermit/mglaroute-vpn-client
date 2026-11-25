@@ -92,25 +92,34 @@ pub async fn run_probe_cycle(conn: &mut Connection, settings: &Settings) -> Resu
     run_probe_cycle_with(conn, settings, &XrayProbeTransport, &TauriProgress).await
 }
 
-pub async fn run_probe_cycle_with(
-    conn: &mut Connection,
+/// Slow/network phase only. Takes owned inputs so callers can release the
+/// SQLite mutex while xray is running; a stalled probe must never block
+/// unrelated reads such as `settings_get`.
+pub async fn probe_cycle_detached(
+    profiles: &[Profile],
+    services: &[ServiceProfile],
     settings: &Settings,
     transport: &dyn ProbeTransport,
     progress: &dyn ProbeProgress,
-) -> Result<ProbeOutcome> {
-    let profiles = profile_repo::list_present_enabled(conn)?;
-    let services = service_profile_repo::list_enabled(conn)?;
+) -> Result<Vec<ProbeSample>> {
     let total = profiles.len();
-
     let mut samples = Vec::with_capacity(total);
     for chunk in profiles.chunks(PROBE_BATCH_SIZE) {
-        let mut batch = transport.probe_batch(chunk, &services, settings).await?;
+        let mut batch = transport.probe_batch(chunk, services, settings).await?;
         samples.append(&mut batch);
         progress.on_batch(samples.len(), total);
     }
+    Ok(samples)
+}
 
+/// Short DB phase: persist samples, re-sort and emit the finished event.
+pub fn persist_probe_samples(
+    conn: &mut Connection,
+    samples: &[ProbeSample],
+    progress: &dyn ProbeProgress,
+) -> Result<ProbeOutcome> {
     let checked_at = Utc::now();
-    for sample in &samples {
+    for sample in samples {
         let passes = passes_all(sample);
         profile_repo::set_result(
             conn,
@@ -158,6 +167,19 @@ pub async fn run_probe_cycle_with(
     };
     progress.on_finished(&outcome);
     Ok(outcome)
+}
+
+pub async fn run_probe_cycle_with(
+    conn: &mut Connection,
+    settings: &Settings,
+    transport: &dyn ProbeTransport,
+    progress: &dyn ProbeProgress,
+) -> Result<ProbeOutcome> {
+    let profiles = profile_repo::list_present_enabled(conn)?;
+    let services = service_profile_repo::list_enabled(conn)?;
+    let samples =
+        probe_cycle_detached(&profiles, &services, settings, transport, progress).await?;
+    persist_probe_samples(conn, &samples, progress)
 }
 
 fn passes_all(sample: &ProbeSample) -> bool {
