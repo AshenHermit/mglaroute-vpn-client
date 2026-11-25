@@ -11,6 +11,14 @@ deferred. Design: `docs/superpowers/specs/2026-11-24-mglaroute-vpn-client-design
 Plan: `docs/superpowers/plans/2026-11-24-mglaroute-vpn-client-mvp.md`.
 Manual pass: `docs/e2e-checklist.md`.
 
+v2rayN-parity connect + probe pass implemented on top of the MVP: first-click
+connect from a fresh import (explicit row selection, cache-free fallback),
+independent connection/probe/mutation domains with distinct busy codes, parallel
+mixed probe capped by `test_concurrency`, live per-server events, and no orphaned
+xray cores (Windows Job Object + startup sidecar reaping). Design (status
+`accepted`): `docs/superpowers/specs/2026-11-25-v2rayn-parity-connect-probe-design.md`.
+Plan: `docs/superpowers/plans/2026-11-25-v2rayn-parity-connect-probe.md`.
+
 ## Stack (fixed by operator)
 
 - pnpm workspace + Nx. Node 20+.
@@ -51,6 +59,8 @@ docs/superpowers/specs/   design docs
    `refetchIntervalMinutes` remains in storage/contract but is not shown in UI.
 4. Periodic auto-test: real delay per server + reachability of all URLs of each active
    service profile through the same proxy; auto-sort by delay (failed last).
+   Tests are a parallel mixed probe (one temporary core per server, up to
+   `test_concurrency` at once) and run independently of a live connection.
 5. Auto-reconnect: after each test cycle switch to best server if current is not best,
    with cooldown. Only servers passing all active service profiles are eligible.
 6. connect/disconnect using system proxy on Windows (WinInet + registry, no admin).
@@ -87,6 +97,11 @@ docs/superpowers/specs/   design docs
   `.dgst` sha256. `XRAY_BINARY_PATH` overrides the binary for dev. No real binary
   in this checkout — `binaries:verify` fails with `ENOENT ... xray.exe.sha256`;
   deferred to a real build machine with network access.
+- Both suites pass. Tests cover guard independence (`probe_busy` never blocks
+  `ConnectionGuard` and vice versa), concurrency cap, per-server event order,
+  cancellation, connect selection, Job Object assignment and startup reaping.
+  Manual smoke on a real binary (orphan check) is operator-only; see
+  `docs/e2e-checklist.md`.
 
 ## Contracts
 
@@ -97,7 +112,25 @@ docs/superpowers/specs/   design docs
 - Real delay matches v2rayN: temporary xray core, `mixed` inbound on free loopback port,
   2 HTTP GETs to ping URL (default `https://www.google.com/generate_204`) through explicit
   loopback proxy, min positive ms. Service URL check = 2xx on **all** URLs of a profile,
-  through same proxy session; no OS-proxy fallback.
+  through same proxy session; no OS-proxy fallback. Probe is a **parallel mixed** run:
+  one temporary core per server via `buffer_unordered(test_concurrency)`, independent
+  of the live connection (running a test never touches system proxy or the working core).
+- `test_concurrency` (settings/contract) defaults to `10` (v2rayN
+  `MixedConcurrencyCount`), clamped `1..=20`; stored in `settings.test_concurrency`
+  behind `PRAGMA user_version = 2` (v1 → v2 `ALTER TABLE` migration).
+- Per-server probe events are the only source of UI progress: `probe-server`
+  (`status: testing | done | failed | cancelled`, `latencyMs`, `serviceResults`)
+  fires before spawn and after each result; `probe-progress` after each server;
+  `probe-cancelled` on accepted Stop; `probe-finished` (`cancelled: bool`) at the
+  end. Payload shapes live in `packages/contracts/src/schemas.ts`.
+- Three independent guards emit distinct busy codes: `connection_busy`
+  (connect/disconnect/apply_reconnect), `probe_busy` (probe_run/auto-test),
+  `mutation_busy` (subscriptions/settings/refetch). `probe_busy` never blocks
+  Connect. Stop test keeps partial samples but skips the global re-sort.
+- No orphaned xray cores: every core joins a Windows Job Object
+  (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) with a PID sidecar next to its temp config;
+  startup reaping kills only PIDs verified as xray with a matching config path.
+  `%TEMP%\mglaroute-probe-*` config/sidecar files are removed on stop/exit.
 - Server feed is a valid import source: `GET /api/feed?format=subscription` (raw text,
   4 URI schemes). Feed is public, no JWT. `format=json` (scan metadata) consumption
   deferred — MVP imports subscription text only.
@@ -106,7 +139,8 @@ docs/superpowers/specs/   design docs
   Tauri `externalBin` bundles them. `XRAY_BINARY_PATH` override for dev.
 - SQLite tables: `subscriptions`, `profiles`, `service_profiles`,
   `profile_service_results`, `settings`. Test results never stored inside profile row.
-- Never put subscription URLs, credentials or raw config into logs.
+- Never put subscription URLs, credentials or raw config into logs — or into
+  probe PID sidecars/events (sidecars hold only a verified PID and config path).
 
 ## Conventions
 

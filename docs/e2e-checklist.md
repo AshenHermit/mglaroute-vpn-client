@@ -97,6 +97,52 @@ Windows registry run; **network** = needs live subscription/test URLs. All steps
    regardless of cooldown; with no passing server the connection is dropped.
    The auto-test tick runs every 60 s.
 
+10. **Fresh import → Connect works without a test.** (binary, Windows, network)
+    Import a subscription (step 2), run **no** test, then on **Dashboard** click
+    **Connect** — first with a server row selected, then again with no selection.
+    Expected: connects on the first click with no cached delay/service results;
+    the selected row wins when set, otherwise the best cached server, otherwise
+    the first enabled server by `sort_index` (never one from a disabled
+    subscription). Manual connect does **not** require passing all active service
+    profiles — no `NotFound` / `Connection failed`. Working core runs and system
+    proxy is set; Connect is enabled while a test is in progress.
+
+11. **Run test while connected → connection and proxy unchanged, rows show `Testing...`.** (binary, Windows, network)
+    Stay `Connected` (step 4) and click **Run test** on **Servers**.
+    Expected: the connection card stays `Connected`, registry values and the
+    working core PID are unchanged throughout, and Connect never returns
+    `probe_busy`. Each row shows `Testing...` in State and `…` in Delay while it
+    is probed, highlighted, with a visible `n / total` progress counter. Events
+    arrive as `probe-server(testing)` → `probe-server(done|failed)` per server and
+    `probe-progress` after each; a manual test does **not** trigger auto-reconnect,
+    so the active server is unchanged when the cycle finishes.
+
+12. **Second click during a test → Run test disabled.** (UI)
+    While the cycle from step 11 is running, observe the **Run test** button.
+    Expected: it reads `Testing...` and is `disabled`; a second click cannot start
+    another cycle and no `probe_busy` / "Another operation is in progress" message
+    appears. **Stop test** is available alongside it.
+
+13. **Stop test → all temporary cores gone, no `%TEMP%` leftovers.** (binary, Windows)
+    During a running test click **Stop test**.
+    Expected: the cycle stops promptly; `probe-cancelled` fires on acceptance and
+    `probe-finished(cancelled: true)` at the end. Every temporary probe xray core
+    is gone (only the working connection core, if connected, remains) — check for
+    orphaned `xray.exe` in Task Manager. No `%TEMP%\mglaroute-probe-*.json` or
+    `%TEMP%\mglaroute-probe-*.pid` files remain. Partial results are kept but the
+    global sort is not re-run, so untested rows keep their order. Repeat after a
+    full test and after app exit: no orphaned xray or sidecar left behind (Windows
+    Job Object kill-on-close + startup reaping of verified PIDs).
+
+14. **Refresh failures show a message per error code.** (UI, network)
+    Force refresh failures with distinct causes and read the subscription row
+    message each time.
+    Expected: `mutation_busy` → "Another operation is in progress. Try again
+    shortly."; `fetch` → "Could not reach subscription URL"; `not_found` →
+    "Subscription not found"; `storage` → "Local storage error"; any other code →
+    "Could not refresh subscription". On connect, `connection_busy` → "Connection
+    operation in progress" instead of a generic failure.
+
 ## Not covered by this checklist
 
 TUN, functional anti-DPI, Clash YAML / sing-box / v2ray JSON full-config import,
