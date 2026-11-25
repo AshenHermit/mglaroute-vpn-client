@@ -266,7 +266,7 @@ pub async fn connection_connect(
     state: State<'_, AppState>,
     profile_id: Option<String>,
 ) -> Result<ConnectionStatePayload, CommandError> {
-    let _permit = state.permit()?;
+    let _permit = state.connection_permit()?;
     connect_impl(&state, profile_id).await
 }
 
@@ -274,6 +274,6 @@ pub async fn connection_connect(
 pub async fn connection_disconnect(
     state: State<'_, AppState>,
 ) -> Result<ConnectionStatePayload, CommandError> {
-    let _permit = state.permit()?;
+    let _permit = state.connection_permit()?;
     disconnect_impl(&state).await
 }

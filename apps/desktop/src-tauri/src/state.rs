@@ -15,8 +15,10 @@ pub enum MutationError {
 
 pub type Result<T> = std::result::Result<T, MutationError>;
 
-/// Managed guard instance holding one permit. `try_acquire` never waits: a
-/// second concurrent mutation fails immediately with [`MutationError::Busy`].
+/// Managed guard instance holding one permit. Each command domain owns its own
+/// instance; `try_acquire` never waits: a second concurrent mutation in the
+/// same domain fails immediately with [`MutationError::Busy`]. The owner maps
+/// that error to its domain-specific command code.
 pub struct MutationGuard {
     semaphore: Arc<Semaphore>,
 }

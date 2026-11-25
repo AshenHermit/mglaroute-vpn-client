@@ -204,7 +204,7 @@ pub(crate) async fn run_impl(state: &AppState) -> Result<ProbeOutcome, CommandEr
 
 #[tauri::command]
 pub async fn probe_run(state: State<'_, AppState>) -> Result<ProbeOutcome, CommandError> {
-    let _permit = state.permit()?;
+    let _permit = state.probe_permit()?;
     run_impl(&state).await
 }
 

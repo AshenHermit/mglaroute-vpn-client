@@ -4,7 +4,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { RefreshResultSchema } from "@mglaroute/contracts";
-import { invoke } from "./invoke";
+import { commandErrorCode, invoke } from "./invoke";
 
 const mockedInvoke = vi.mocked(tauriInvoke);
 
@@ -56,5 +56,9 @@ describe("typed invoke", () => {
     const message = (caught as Error).message;
     expect(message).toContain("subscription_refresh");
     expect(message).not.toContain("secret.example");
+  });
+
+  it("recognizes the addressable probe_busy code", () => {
+    expect(commandErrorCode({ probe_busy: null })).toBe("probe_busy");
   });
 });

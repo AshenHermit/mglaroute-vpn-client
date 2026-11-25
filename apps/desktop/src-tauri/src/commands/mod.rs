@@ -1,5 +1,6 @@
-//! Tauri command surface. Every mutating command takes the single-occupancy
-//! mutation permit first; read commands never mutate storage or OS state.
+//! Tauri command surface. Mutating commands take their domain's single-occupancy
+//! permit (connection, probe or mutation) first; read commands never mutate
+//! storage or OS state.
 //! Payloads are camelCase to match `packages/contracts`; the database stays
 //! snake_case. No URL, credential, raw config or generated config is logged.
 
@@ -20,7 +21,7 @@ use crate::platform::proxy::{load_previous, PreviousProxy, ProxyBackend};
 use crate::platform::proxy_windows::WindowsProxy;
 use crate::probe::scheduler::should_refetch;
 use crate::service_profiles::ensure_defaults_on_empty;
-use crate::state::{emit, MutationError, MutationGuard, MutationPermit};
+use crate::state::{emit, MutationGuard, MutationPermit};
 use crate::storage::migrate;
 use crate::storage::models::Settings;
 use crate::storage::repos::{settings_repo, subscription_repo};
@@ -47,8 +48,12 @@ pub use subscription::{
 #[derive(Debug, thiserror::Error, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandError {
+    #[error("connection operation in progress")]
+    ConnectionBusy,
+    #[error("probe operation in progress")]
+    ProbeBusy,
     #[error("another mutation is already in progress")]
-    Busy,
+    MutationBusy,
     #[error("not found")]
     NotFound,
     #[error("invalid input")]
@@ -65,12 +70,6 @@ pub enum CommandError {
     Probe,
     #[error("unsupported")]
     Unsupported,
-}
-
-impl From<MutationError> for CommandError {
-    fn from(_: MutationError) -> Self {
-        Self::Busy
-    }
 }
 
 impl From<rusqlite::Error> for CommandError {
@@ -160,7 +159,9 @@ struct RuntimeState {
 
 struct AppStateInner {
     conn: Mutex<Connection>,
-    guard: MutationGuard,
+    connection_guard: MutationGuard,
+    probe_guard: MutationGuard,
+    mutation_guard: MutationGuard,
     runtime: Mutex<RuntimeState>,
     config_dir: PathBuf,
     launcher: Box<dyn CoreLauncher>,
@@ -181,7 +182,9 @@ impl AppState {
         Self {
             inner: Arc::new(AppStateInner {
                 conn: Mutex::new(conn),
-                guard: MutationGuard::default(),
+                connection_guard: MutationGuard::default(),
+                probe_guard: MutationGuard::default(),
+                mutation_guard: MutationGuard::default(),
                 runtime: Mutex::new(RuntimeState {
                     connection: ConnectionStatePayload {
                         status: ConnectionStatus::Disconnected,
@@ -200,8 +203,31 @@ impl AppState {
         }
     }
 
+    fn connection_permit(&self) -> std::result::Result<MutationPermit, CommandError> {
+        self.inner
+            .connection_guard
+            .try_acquire()
+            .map_err(|_| CommandError::ConnectionBusy)
+    }
+
+    /// Non-blocking variant for the crash watcher: skip the tick when a
+    /// connection command already owns the slot.
+    fn try_connection_permit(&self) -> Option<MutationPermit> {
+        self.inner.connection_guard.try_acquire().ok()
+    }
+
+    fn probe_permit(&self) -> std::result::Result<MutationPermit, CommandError> {
+        self.inner
+            .probe_guard
+            .try_acquire()
+            .map_err(|_| CommandError::ProbeBusy)
+    }
+
     fn permit(&self) -> std::result::Result<MutationPermit, CommandError> {
-        self.inner.guard.try_acquire().map_err(CommandError::from)
+        self.inner
+            .mutation_guard
+            .try_acquire()
+            .map_err(|_| CommandError::MutationBusy)
     }
 }
 
@@ -243,7 +269,7 @@ async fn mark_faulted(state: &AppState) {
     emit_connection(&runtime.connection);
 }
 
-/// Caller holds the mutation permit. When the connected core has exited,
+/// Caller holds the connection permit. When the connected core has exited,
 /// restore the captured proxy, drop the temp config and report `Faulted`.
 /// No restart is attempted — the operator reconnects explicitly.
 pub(crate) async fn handle_exited_child(
@@ -315,7 +341,8 @@ pub(crate) fn child_has_exited(state: &AppState) -> bool {
 }
 
 /// Polls the connected core every 500 ms. `try_wait` needs no permit; the
-/// mutation guard is taken only for the state/proxy transition.
+/// connection guard is taken only for the state/proxy transition, and a tick
+/// that cannot get it is skipped so an in-flight connect is never delayed.
 pub async fn child_exit_watch(state: AppState) {
     let mut ticker = tokio::time::interval(Duration::from_millis(500));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -325,12 +352,13 @@ pub async fn child_exit_watch(state: AppState) {
         if !child_has_exited(&state) {
             continue;
         }
-        if let Ok(_permit) = state.permit() {
-            if let Err(error) = handle_exited_child(&state).await {
-                if error == CommandError::Proxy {
-                    // Generic text only: proxy errors never carry secrets.
-                    eprintln!("failed to restore previous proxy after core exit");
-                }
+        let Some(_permit) = state.try_connection_permit() else {
+            continue;
+        };
+        if let Err(error) = handle_exited_child(&state).await {
+            if error == CommandError::Proxy {
+                // Generic text only: proxy errors never carry secrets.
+                eprintln!("failed to restore previous proxy after core exit");
             }
         }
     }
@@ -418,7 +446,7 @@ pub async fn auto_test_loop(state: AppState) {
                 .unwrap_or(false)
         };
         if enabled {
-            if let Ok(_permit) = state.permit() {
+            if let Ok(_permit) = state.probe_permit() {
                 let _ = probe::run_impl(&state).await;
             }
         }
@@ -648,6 +676,42 @@ mod tests {
             anti_dpi::status().status,
             anti_dpi::AntiDpiMode::Unsupported
         );
+    }
+
+    fn state_with_fake_launcher() -> AppState {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        migrate(&conn).expect("migrate");
+        AppState::new(
+            conn,
+            PathBuf::new(),
+            Box::new(InMemoryProxy::new(PreviousProxy::Direct)),
+            Box::new(FakeLauncher {
+                stopped: Arc::new(AtomicBool::new(false)),
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn probe_guard_does_not_block_connection_guard() {
+        let state = state_with_fake_launcher();
+        let probe = state.probe_permit().expect("probe permit");
+        assert!(state.connection_permit().is_ok());
+        assert_eq!(state.probe_permit().err(), Some(CommandError::ProbeBusy));
+        drop(probe);
+        assert!(state.probe_permit().is_ok());
+    }
+
+    #[tokio::test]
+    async fn connection_guard_does_not_block_mutation_guard() {
+        let state = state_with_fake_launcher();
+        let connection = state.connection_permit().expect("connection permit");
+        assert_eq!(
+            state.connection_permit().err(),
+            Some(CommandError::ConnectionBusy)
+        );
+        assert!(state.permit().is_ok());
+        drop(connection);
+        assert!(state.connection_permit().is_ok());
     }
 
     #[test]

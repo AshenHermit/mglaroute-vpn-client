@@ -3,7 +3,10 @@ import type { ZodType } from "@mglaroute/contracts";
 
 /** Safe, secret-free codes mirrored from Rust `CommandError`. */
 const SAFE_CODES = [
-  "busy",
+  "busy", // legacy code kept for older native builds
+  "connection_busy",
+  "probe_busy",
+  "mutation_busy",
   "not_found",
   "invalid_input",
   "storage",
