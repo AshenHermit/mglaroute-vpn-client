@@ -4,10 +4,9 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ServerTable } from "../features/server-table/ServerTable";
 import { invoke } from "../lib/invoke";
-import { useAppStore, useBackendEvents } from "../stores/app.store";
+import { useAppStore } from "../stores/app.store";
 
 export default function Servers() {
-  useBackendEvents();
   const profiles = useAppStore((store) => store.profiles);
   const setProfiles = useAppStore((store) => store.setProfiles);
   const setNotice = useAppStore((store) => store.setNotice);

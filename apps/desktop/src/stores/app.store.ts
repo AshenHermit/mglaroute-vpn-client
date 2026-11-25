@@ -1,6 +1,7 @@
 import {
   EVENTS,
   ProbeResultSchema,
+  SubscriptionSchema,
   type Profile,
   type ServiceProfile,
   type Settings,
@@ -9,6 +10,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { create } from "zustand";
+import { invoke } from "../lib/invoke";
 
 /**
  * UI/session state only. Nothing here is persisted: subscriptions, profiles,
@@ -54,6 +56,7 @@ export const useAppStore = create<AppStore>((set) => ({
 export function useBackendEvents(): void {
   const setProbeProgress = useAppStore((store) => store.setProbeProgress);
   const setProbeFinished = useAppStore((store) => store.setProbeFinished);
+  const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setNotice = useAppStore((store) => store.setNotice);
 
   useEffect(() => {
@@ -106,6 +109,14 @@ export function useBackendEvents(): void {
         setNotice(
           `Refresh complete: ${result.added} added, ${result.updated} updated, ${result.absent} absent, ${result.badLines} bad lines`,
         );
+        // Re-fetch so status badges (e.g. error) update without a page remount.
+        void invoke("subscription_list", SubscriptionSchema.array())
+          .then((rows) => {
+            if (active) setSubscriptions(rows);
+          })
+          .catch(() => {
+            // Never log native error text: it can echo subscription URLs.
+          });
       }
     });
 
@@ -113,5 +124,5 @@ export function useBackendEvents(): void {
       active = false;
       cleanups.forEach((stop) => stop());
     };
-  }, [setProbeProgress, setProbeFinished, setNotice]);
+  }, [setProbeProgress, setProbeFinished, setSubscriptions, setNotice]);
 }

@@ -4,7 +4,7 @@ import Servers from "./pages/Servers";
 import ServiceProfiles from "./pages/ServiceProfiles";
 import Settings from "./pages/Settings";
 import Subscriptions from "./pages/Subscriptions";
-import { useAppStore } from "./stores/app.store";
+import { useAppStore, useBackendEvents } from "./stores/app.store";
 
 const pages = {
   dashboard: { label: "Dashboard", component: Dashboard },
@@ -17,6 +17,7 @@ const pages = {
 type Page = keyof typeof pages;
 
 export default function App() {
+  useBackendEvents();
   const [page, setPage] = useState<Page>("dashboard");
   const notice = useAppStore((store) => store.notice);
   const setNotice = useAppStore((store) => store.setNotice);

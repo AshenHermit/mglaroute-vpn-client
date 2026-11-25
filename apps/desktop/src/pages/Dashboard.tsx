@@ -1,18 +1,45 @@
-import { AntiDpiStatusSchema } from "@mglaroute/contracts";
+import {
+  AntiDpiStatusSchema,
+  ProfileSchema,
+  SubscriptionSchema,
+} from "@mglaroute/contracts";
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ConnectionPanel } from "../features/connection-panel/ConnectionPanel";
 import { invoke } from "../lib/invoke";
-import { useAppStore, useBackendEvents } from "../stores/app.store";
+import { useAppStore } from "../stores/app.store";
 
 export default function Dashboard() {
-  useBackendEvents();
   const subscriptionCount = useAppStore((store) => store.subscriptions.length);
   const serverCount = useAppStore((store) => store.profiles.length);
+  const setSubscriptions = useAppStore((store) => store.setSubscriptions);
+  const setProfiles = useAppStore((store) => store.setProfiles);
   const tested = useAppStore((store) => store.probeTested);
   const total = useAppStore((store) => store.probeTotal);
   const finishedAt = useAppStore((store) => store.lastProbeFinishedAt);
   const [antiDpi, setAntiDpi] = useState("unknown");
+
+  // Hydrate metric counts from durable storage on every mount (no auto-connect).
+  useEffect(() => {
+    let active = true;
+    void invoke("subscription_list", SubscriptionSchema.array())
+      .then((rows) => {
+        if (active) setSubscriptions(rows);
+      })
+      .catch(() => {
+        // Never surface native error text: it may echo subscription URLs.
+      });
+    void invoke("profile_list", ProfileSchema.array())
+      .then((rows) => {
+        if (active) setProfiles(rows);
+      })
+      .catch(() => {
+        // Error text may carry link data; stay silent.
+      });
+    return () => {
+      active = false;
+    };
+  }, [setSubscriptions, setProfiles]);
 
   useEffect(() => {
     let active = true;
