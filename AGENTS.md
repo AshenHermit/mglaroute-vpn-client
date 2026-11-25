@@ -4,8 +4,12 @@ Cross-platform VPN client for the mglaroute ecosystem. Companion to `../mglarout
 
 ## Status
 
-Planned. No source code yet. Design: `docs/superpowers/specs/2026-11-24-mglaroute-vpn-client-design.md`.
-Task-by-task plan to be written after spec approval.
+Windows desktop MVP implemented. Subscription import by URL, service profiles,
+real delay + service probing, auto-sort, auto-reconnect with cooldown, system
+proxy connect/disconnect with crash + startup restore. Linux, Android and iOS
+deferred. Design: `docs/superpowers/specs/2026-11-24-mglaroute-vpn-client-design.md`.
+Plan: `docs/superpowers/plans/2026-11-24-mglaroute-vpn-client-mvp.md`.
+Manual pass: `docs/e2e-checklist.md`.
 
 ## Stack (fixed by operator)
 
@@ -17,7 +21,7 @@ Task-by-task plan to be written after spec approval.
 - Target: desktop Windows now; Linux desktop later. Android later; iOS after Android.
   All OS-specific behaviour behind Rust traits so mobile can reuse core logic.
 
-## Layout (planned)
+## Layout
 
 ```
 apps/desktop/
@@ -49,17 +53,36 @@ docs/superpowers/specs/   design docs
 6. connect/disconnect using system proxy on Windows (WinInet + registry, no admin).
    Restore previous proxy state on disconnect. TUN is a later feature.
 
-## Not in MVP
+## Not in MVP (current limitations)
 
-- Anti-DPI service. Deferred. Engine binaries and licence notices still ship in builds;
-  reserve `AntiDpiService` trait + disabled command stubs. Windows: winws2.exe +
-  WinDivert driver (admin/UAC). Linux: nfqws2 built locally + nftables NFQUEUE (root).
-  zapret2/Igareck catalogue has no domain-list input; only strategy preset, adapter,
-  TCP port scope. GPL-3.0 wrapper; WinDivert LGPL/GPL — preserve all notices.
-- TUN mode, iOS, Android UI.
-- Clash YAML / sing-box / v2ray JSON full-config import (v2rayN hands these to other cores).
-- `subscription-userinfo` traffic/expiry parsing (v2rayN has none).
-- Credential login to the server panel; client imports public subscription URLs only.
+- No TUN mode — per-user WinInet registry proxy only, no admin or driver.
+- No functional anti-DPI. Engine binaries, licence notices and disabled stubs
+  ship in builds; every `anti_dpi_*` command reports `unsupported`. Windows:
+  winws2.exe + WinDivert driver (admin/UAC). Linux: nfqws2 built locally +
+  nftables NFQUEUE (root). zapret2/Igareck catalogue has no domain-list input;
+  only strategy preset, adapter, TCP port scope. GPL-3.0 wrapper; WinDivert
+  LGPL/GPL — preserve all notices.
+- No Clash YAML / sing-box / v2ray JSON full-config import (v2rayN hands these
+  to other cores).
+- No `format=json` feed import — subscription text only.
+- RAS-entry proxy iteration skipped — no `RasEnumEntriesW`, no dial-up proxy
+  restore.
+- Linux desktop, Android and iOS deferred — Windows desktop only.
+- No `subscription-userinfo` traffic/expiry parsing (v2rayN has none).
+- No credential login to the server panel; client imports public subscription URLs only.
+
+## Verification
+
+- `pnpm test`, `pnpm build`: set `NX_DAEMON='false'` (Nx daemon disconnect flake).
+  `Cannot switch to pnpm@9` and zod annotation warnings are pre-existing.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: plain command
+  needs a bundled binary (tauri-build validates `externalBin`). Tests use a fake
+  launcher; test-only `$env:TAURI_CONFIG='{"bundle":{"externalBin":[],"resources":[]}}'`
+  skips the sidecar check without a real binary.
+- `pnpm binaries:fetch` / `pnpm binaries:verify`: fetch/verify staged xray with
+  `.dgst` sha256. `XRAY_BINARY_PATH` overrides the binary for dev. No real binary
+  in this checkout — `binaries:verify` fails with `ENOENT ... xray.exe.sha256`;
+  deferred to a real build machine with network access.
 
 ## Contracts
 

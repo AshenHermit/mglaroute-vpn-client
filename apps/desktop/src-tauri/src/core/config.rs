@@ -601,7 +601,7 @@ mod tests {
     fn proxy_outbound(profile: &Profile) -> Value {
         let config =
             build_connection_config(&snapshot_for(profile, 10808, Path::new("C:/tmp/xray")), &[])
-                .unwrap_or_else(|error| panic!("config for {}: {error}", profile.link));
+                .unwrap_or_else(|error| panic!("config build failed (test helper): {error}"));
         config["outbounds"][0].clone()
     }
 
