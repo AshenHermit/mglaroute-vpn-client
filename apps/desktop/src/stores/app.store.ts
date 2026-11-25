@@ -84,11 +84,12 @@ export const useAppStore = create<AppStore>((set) => ({
     }),
   setProbeStarted: (ids) =>
     set({
-      // Optimistic start: the spinner, Stop button and highlighted rows must
-      // appear on click, even if `probe-server` events coalesce or are lost.
+      // Optimistic start: spinner and Stop button appear on click, but row
+      // highlights come only from `probe-server` `testing` events so they
+      // reflect the servers actually being probed at any concurrency value.
       // `runProbe` clears this state in `finally` on every exit path.
       probeTesting: true,
-      probeTestingIds: ids,
+      probeTestingIds: [],
       probeCancelled: false,
       probeTested: 0,
       probeTotal: ids.length,

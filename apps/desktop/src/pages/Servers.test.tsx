@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Profile } from "@mglaroute/contracts";
 import { CommandInvocationError } from "../lib/invoke";
@@ -34,13 +34,21 @@ const server: Profile = {
   updatedAt: "2026-11-24T00:00:00Z",
 };
 
+const otherServer: Profile = {
+  ...server,
+  id: "p-2",
+  serverId: "p-2",
+  remarks: "node 2",
+  sortIndex: 1,
+};
+
 describe("Servers probe controls", () => {
   afterEach(cleanup);
 
   beforeEach(() => {
     vi.clearAllMocks();
     useAppStore.setState({
-      profiles: [server],
+      profiles: [server, otherServer],
       probeTesting: false,
       probeTestingIds: [],
       probeCancelled: false,
@@ -48,7 +56,7 @@ describe("Servers probe controls", () => {
       selectedProfileId: null,
     });
     mockedInvoke.mockImplementation(async (command) => {
-      if (command === "profile_list") return [server] as never;
+      if (command === "profile_list") return [server, otherServer] as never;
       if (command === "probe_run") {
         throw new CommandInvocationError("probe_run", "probe_busy");
       }
@@ -82,19 +90,47 @@ describe("Servers probe controls", () => {
 
   it("shows testing state on click before any backend event arrives", async () => {
     mockedInvoke.mockImplementation(async (command) => {
-      if (command === "profile_list") return [server] as never;
+      if (command === "profile_list") return [server, otherServer] as never;
       // Never settles: the click must update the UI synchronously.
       return await new Promise(() => undefined);
     });
     render(<Servers />);
-    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(1));
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(2));
 
     fireEvent.click(screen.getByRole("button", { name: "Run test" }));
 
     expect(useAppStore.getState().probeTesting).toBe(true);
-    expect(useAppStore.getState().probeTestingIds).toEqual(["p-1"]);
+    expect(useAppStore.getState().probeTestingIds).toEqual([]);
     expect(screen.getByRole("button", { name: "Stop test" })).not.toBeNull();
-    expect(screen.getByTestId("server-row").textContent).toContain("Testing...");
+    expect(
+      screen.getAllByTestId("server-row").some((row) =>
+        row.textContent?.includes("Testing..."),
+      ),
+    ).toBe(false);
+  });
+
+  it("highlights only the profile from a testing event", async () => {
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "profile_list") return [server, otherServer] as never;
+      return await new Promise(() => undefined);
+    });
+    render(<Servers />);
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(2));
+
+    act(() => {
+      useAppStore.getState().setProbeServer({
+        profileId: "p-2",
+        status: "testing",
+        latencyMs: null,
+        serviceResults: [],
+      });
+    });
+
+    expect(useAppStore.getState().probeTestingIds).toEqual(["p-2"]);
+    const rows = screen.getAllByTestId("server-row");
+    const highlighted = rows.filter((row) => row.textContent?.includes("Testing..."));
+    expect(highlighted).toHaveLength(1);
+    expect(highlighted[0].getAttribute("data-profile-id")).toBe("p-2");
   });
 
   it("clears testing state when probe_run fails", async () => {
