@@ -95,10 +95,25 @@ export const RefreshResultSchema = z.object({
 });
 export type RefreshResult = z.infer<typeof RefreshResultSchema>;
 
+export const ProbeServiceResultSchema = z.object({
+  serviceProfileId: z.string(),
+  reachable: z.boolean(),
+});
+
+export const ProbeServerEventSchema = z.object({
+  profileId: z.string(),
+  status: z.enum(["testing", "done", "failed"]),
+  latencyMs: z.number().int().nullable(),
+  serviceResults: z.array(ProbeServiceResultSchema),
+});
+export type ProbeServerEvent = z.infer<typeof ProbeServerEventSchema>;
+
 export const ProbeResultSchema = z.object({
   tested: z.number().int(),
   sorted: z.number().int(),
   finishedAt: timestamp,
+  // Older payloads omit it; the native side always sends an explicit flag.
+  cancelled: z.boolean().default(false),
 });
 export type ProbeResult = z.infer<typeof ProbeResultSchema>;
 
@@ -109,6 +124,8 @@ export type AntiDpiStatus = z.infer<typeof AntiDpiStatusSchema>;
 
 export const EVENTS = {
   probeProgress: "probe-progress",
+  probeServer: "probe-server",
+  probeCancelled: "probe-cancelled",
   probeFinished: "probe-finished",
   connectionState: "connection-state",
   subscriptionRefreshed: "subscription-refreshed",

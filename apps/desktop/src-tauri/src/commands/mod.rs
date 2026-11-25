@@ -5,13 +5,14 @@
 //! snake_case. No URL, credential, raw config or generated config is logged.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 use tokio::time::MissedTickBehavior;
 
 use crate::anti_dpi::AntiDpiStatus;
@@ -34,7 +35,7 @@ pub mod settings;
 pub mod subscription;
 
 pub use connection::{connection_connect, connection_disconnect, connection_status};
-pub use probe::{best_eligible_profile, probe_run, profile_list};
+pub use probe::{best_eligible_profile, probe_cancel, probe_run, profile_list};
 pub use service_profile::{
     service_profile_create, service_profile_list, service_profile_remove, service_profile_update,
 };
@@ -170,6 +171,8 @@ struct AppStateInner {
     config_dir: PathBuf,
     launcher: Box<dyn CoreLauncher>,
     job: Arc<JobHandle>,
+    probe_running: AtomicBool,
+    probe_cancel_tx: watch::Sender<bool>,
 }
 
 #[derive(Clone)]
@@ -218,6 +221,8 @@ impl AppState {
                 config_dir,
                 launcher,
                 job,
+                probe_running: AtomicBool::new(false),
+                probe_cancel_tx: watch::Sender::new(false),
             }),
         }
     }
@@ -245,6 +250,20 @@ impl AppState {
             .probe_guard
             .try_acquire()
             .map_err(|_| CommandError::ProbeBusy)
+    }
+
+    /// Begin a cycle: clear any previous stop request, mark the probe as
+    /// running (so `probe_cancel` is accepted) and hand out the watch receiver.
+    pub fn start_probe(&self) -> watch::Receiver<bool> {
+        self.inner.probe_running.store(true, Ordering::SeqCst);
+        self.inner.probe_cancel_tx.send_replace(false);
+        self.inner.probe_cancel_tx.subscribe()
+    }
+
+    /// End a cycle. No event is emitted here: `probe-cancelled` belongs to the
+    /// cycle that observed the flag.
+    pub fn finish_probe(&self) {
+        self.inner.probe_running.store(false, Ordering::SeqCst);
     }
 
     fn permit(&self) -> std::result::Result<MutationPermit, CommandError> {
@@ -478,7 +497,9 @@ pub async fn auto_test_loop(state: AppState) {
         };
         if enabled {
             if let Ok(_permit) = state.probe_permit() {
-                let _ = probe::run_impl(&state).await;
+                let cancel = state.start_probe();
+                let _ = probe::run_impl(&state, true, cancel).await;
+                state.finish_probe();
             }
         }
     }
@@ -763,6 +784,7 @@ mod tests {
                 "connection_connect",
                 "connection_disconnect",
                 "connection_status",
+                "probe_cancel",
                 "probe_run",
                 "profile_list",
                 "service_profile_create",

@@ -40,6 +40,7 @@ command_list!(
     settings_get,
     settings_update,
     probe_run,
+    probe_cancel,
     profile_list,
     connection_status,
     connection_connect,

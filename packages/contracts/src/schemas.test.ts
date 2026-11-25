@@ -4,6 +4,7 @@ import {
   ConnectionStateSchema,
   ProfileSchema,
   ProbeResultSchema,
+  ProbeServerEventSchema,
   RefreshResultSchema,
   ServiceProfileSchema,
   SettingsPatchSchema,
@@ -159,6 +160,20 @@ describe("contract schemas", () => {
       tested: 5,
       sorted: 4,
       finishedAt: timestamp,
+      cancelled: false,
+    });
+    expect(
+      ProbeServerEventSchema.parse({
+        profileId: "p-1",
+        status: "done",
+        latencyMs: 12,
+        serviceResults: [{ serviceProfileId: "svc-1", reachable: true }],
+      }),
+    ).toEqual({
+      profileId: "p-1",
+      status: "done",
+      latencyMs: 12,
+      serviceResults: [{ serviceProfileId: "svc-1", reachable: true }],
     });
 
     expect(SettingsPatchSchema.parse({ autoTestEnabled: false })).toEqual({

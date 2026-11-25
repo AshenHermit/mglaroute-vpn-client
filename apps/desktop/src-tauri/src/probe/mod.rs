@@ -4,7 +4,10 @@ pub mod scheduler;
 pub mod service_check;
 pub mod temp;
 
-pub use cycle::{run_probe_cycle, ProbeOutcome};
+pub use cycle::{
+    probe_cycle_detached, run_probe_cycle, PersistOptions, ProbeOutcome, ProbeServerEvent,
+    ProbeServerStatus,
+};
 pub use delay::measure_delay;
 pub use scheduler::should_refetch;
 pub use service_check::check_service_profile;

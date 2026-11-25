@@ -1,15 +1,18 @@
 use std::collections::HashSet;
+use std::sync::atomic::Ordering;
 
 use chrono::{DateTime, Utc};
 
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
+use tokio::sync::watch;
 
 use super::connection::{connect_impl, disconnect_impl};
 use super::{AppState, CommandError, ConnectionStatus};
 use crate::probe::cycle::{
-    persist_probe_samples, probe_cycle_detached, ProbeOutcome, TauriProgress, XrayProbeTransport,
+    persist_probe_samples, probe_cycle_detached, PersistOptions, ProbeOutcome, TauriProgress,
+    XrayProbeTransport,
 };
 use crate::reconnect::{decide_reconnect, ReconnectDecision};
 use crate::storage::models::{Profile, Settings};
@@ -161,10 +164,14 @@ pub(crate) async fn apply_reconnect(
     Ok(())
 }
 
-/// Caller holds the mutation permit. Auto-reconnect is gated here, and the
-/// last-switch timestamp is recorded here after a successful switch — the pure
-/// `decide_reconnect` function owns neither.
-pub(crate) async fn run_impl(state: &AppState) -> Result<ProbeOutcome, CommandError> {
+/// Caller holds the probe permit. Auto-reconnect is gated by `apply_reconnect`
+/// (manual runs pass `false`); the last-switch timestamp is recorded here after
+/// a successful switch — the pure `decide_reconnect` function owns neither.
+pub(crate) async fn run_impl(
+    state: &AppState,
+    apply_reconnect: bool,
+    cancel: watch::Receiver<bool>,
+) -> Result<ProbeOutcome, CommandError> {
     // Read inputs in a short lock scope. The probe itself can take seconds per
     // server; holding the shared SQLite mutex across it makes `settings_get`
     // block forever and leaves the Settings UI on "Loading settings…".
@@ -183,20 +190,31 @@ pub(crate) async fn run_impl(state: &AppState) -> Result<ProbeOutcome, CommandEr
         &settings,
         &XrayProbeTransport,
         &TauriProgress,
+        cancel.clone(),
     )
     .await?;
+    let cancelled = *cancel.borrow();
 
     let outcome = {
         let mut conn = state.inner.conn.lock().await;
-        persist_probe_samples(&mut conn, &samples, &TauriProgress)?
+        persist_probe_samples(
+            &mut conn,
+            &samples,
+            &TauriProgress,
+            PersistOptions {
+                sort: !cancelled,
+                cancelled,
+            },
+        )?
     };
 
-    if settings.auto_reconnect_enabled {
+    if apply_reconnect && settings.auto_reconnect_enabled {
         let reconnect_candidates = {
             let conn = state.inner.conn.lock().await;
             candidates(&conn)?
         };
-        let _ = apply_reconnect(state, &settings, &reconnect_candidates, Utc::now()).await;
+        let _ = super::probe::apply_reconnect(state, &settings, &reconnect_candidates, Utc::now())
+            .await;
     }
 
     Ok(outcome)
@@ -205,7 +223,24 @@ pub(crate) async fn run_impl(state: &AppState) -> Result<ProbeOutcome, CommandEr
 #[tauri::command]
 pub async fn probe_run(state: State<'_, AppState>) -> Result<ProbeOutcome, CommandError> {
     let _permit = state.probe_permit()?;
-    run_impl(&state).await
+    let cancel = state.start_probe();
+    let result = run_impl(&state, false, cancel).await;
+    state.finish_probe();
+    result
+}
+
+/// Accept a stop request only while a probe cycle owns the probe permit.
+/// Flips the watch flag and returns `true`; the cycle emits `probe-cancelled`
+/// once when it observes the flag. Idle callers get `false` and no event.
+// Sync on purpose: Tauri rejects an async command with a borrowed `State`
+// unless it returns `Result`. The IPC payload stays a plain boolean.
+#[tauri::command]
+pub fn probe_cancel(state: State<'_, AppState>) -> bool {
+    if !state.inner.probe_running.load(Ordering::SeqCst) {
+        return false;
+    }
+    state.inner.probe_cancel_tx.send_replace(true);
+    true
 }
 
 #[tauri::command]

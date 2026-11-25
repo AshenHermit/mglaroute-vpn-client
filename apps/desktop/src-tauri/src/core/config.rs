@@ -342,28 +342,21 @@ fn routing(rules: Vec<Value>) -> Value {
     json!({"domainStrategy": "AsIs", "rules": rules})
 }
 
-/// One config per speed-test batch: `mixed` inbound on loopback per port,
-/// one outbound per profile, one routing rule tying the two together.
-pub fn build_speedtest_config(profiles: &[Profile], ports: &[u16]) -> Result<Value> {
-    let mut inbounds = Vec::with_capacity(ports.len());
-    let mut outbounds = Vec::with_capacity(ports.len());
-    let mut rules = Vec::with_capacity(ports.len());
-    for (index, (profile, port)) in profiles.iter().zip(ports.iter()).enumerate() {
-        let in_tag = format!("probe-in-{index}");
-        let out_tag = format!("probe-out-{index}");
-        inbounds.push(mixed_inbound(&in_tag, *port));
-        outbounds.push(build_outbound(profile, &out_tag)?);
-        rules.push(json!({
+/// One config for a single probe core: one `mixed` inbound on loopback, one
+/// outbound for this profile and one routing rule tying the two together. No
+/// `direct` fallback and no exclusions — every request must use the proxy.
+pub fn build_probe_config(profile: &Profile, port: u16) -> Result<Value> {
+    let in_tag = "probe-in";
+    let out_tag = "probe-out";
+    Ok(json!({
+        "log": {"loglevel": "warning"},
+        "inbounds": [mixed_inbound(in_tag, port)],
+        "outbounds": [build_outbound(profile, out_tag)?],
+        "routing": routing(vec![json!({
             "type": "field",
             "inboundTag": [in_tag],
             "outboundTag": out_tag,
-        }));
-    }
-    Ok(json!({
-        "log": {"loglevel": "warning"},
-        "inbounds": inbounds,
-        "outbounds": outbounds,
-        "routing": routing(rules),
+        })]),
     }))
 }
 
@@ -505,37 +498,29 @@ mod tests {
     }
 
     #[test]
-    fn speedtest_config_shape() {
-        let profiles = vec![vless_profile("a", 443), trojan_profile()];
-        let ports = [10801u16, 10802];
-        let config = build_speedtest_config(&profiles, &ports).expect("speedtest config");
+    fn probe_config_shape() {
+        let profile = vless_profile("a", 443);
+        let config = build_probe_config(&profile, 10801).expect("probe config");
 
-        assert_eq!(config["log"]["loglevel"], "warning");
         let inbounds = config["inbounds"].as_array().expect("inbounds array");
         let outbounds = config["outbounds"].as_array().expect("outbounds array");
         let rules = config["routing"]["rules"]
             .as_array()
             .expect("routing rules array");
-        assert_eq!(inbounds.len(), 2);
-        assert_eq!(outbounds.len(), 2);
-        assert_eq!(rules.len(), 2);
-        assert_eq!(config["routing"]["domainStrategy"], "AsIs");
-
-        for (index, inbound) in inbounds.iter().enumerate() {
-            assert_eq!(inbound["listen"], "127.0.0.1");
-            assert_eq!(inbound["protocol"], "mixed");
-            assert_eq!(inbound["port"], ports[index]);
-            assert_eq!(inbound["noauth"], true);
-            assert_eq!(inbound["settings"]["noauth"], true);
-            let in_tag = inbound["tag"].as_str().expect("inbound tag");
-            let out_tag = outbounds[index]["tag"].as_str().expect("outbound tag");
-            assert!(
-                rules.iter().any(|rule| {
-                    rule["inboundTag"][0] == in_tag && rule["outboundTag"] == out_tag
-                }),
-                "missing rule {in_tag} -> {out_tag}"
-            );
-        }
+        assert_eq!(inbounds.len(), 1);
+        assert_eq!(outbounds.len(), 1);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(inbounds[0]["port"], 10801);
+        assert_eq!(inbounds[0]["protocol"], "mixed");
+        assert_eq!(outbounds[0]["protocol"], "vless");
+        assert_eq!(rules[0]["inboundTag"][0], inbounds[0]["tag"]);
+        assert_eq!(rules[0]["outboundTag"], outbounds[0]["tag"]);
+        assert!(
+            outbounds
+                .iter()
+                .all(|outbound| outbound["protocol"] != "freedom"),
+            "probe config must not add a direct outbound"
+        );
     }
 
     #[test]
