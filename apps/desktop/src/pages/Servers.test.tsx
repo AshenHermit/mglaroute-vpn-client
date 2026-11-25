@@ -72,4 +72,11 @@ describe("Servers probe controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run test" }));
     await waitFor(() => expect(useAppStore.getState().probeCancelled).toBe(false));
   });
+
+  it("shows a spinner while servers are being tested", () => {
+    useAppStore.setState({ probeTesting: true, probeTestingIds: ["p-1"] });
+    render(<Servers />);
+    const [button] = screen.getAllByRole("button", { name: /Testing/ });
+    expect(button.querySelector(".animate-spin")).not.toBeNull();
+  });
 });

@@ -12,6 +12,7 @@ const SAFE_CODES = [
   "storage",
   "fetch",
   "core",
+  "port_in_use",
   "proxy",
   "probe",
   "unsupported",

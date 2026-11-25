@@ -73,7 +73,17 @@ export default function Servers() {
             </span>
           )}
           <Button onClick={() => void runProbe()} disabled={probeTesting}>
-            {probeTesting ? "Testing..." : "Run test"}
+            {probeTesting ? (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent"
+                />
+                Testing...
+              </>
+            ) : (
+              "Run test"
+            )}
           </Button>
           {probeTesting && (
             <Button variant="secondary" onClick={() => void stopProbe()}>

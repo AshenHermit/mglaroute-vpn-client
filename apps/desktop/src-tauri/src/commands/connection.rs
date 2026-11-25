@@ -149,8 +149,19 @@ pub(crate) async fn connect_impl(
     if !new_core_alive {
         stop_child(&mut child);
         remove_config(&Some(snapshot.config_path.clone()));
-        mark_faulted(state).await;
-        return Err(CommandError::Core);
+        // `wait_for_port` succeeded while our core is already gone, so the
+        // listener belongs to another program. This is a port conflict, not a
+        // crash of a core we owned: keep the connection slot disconnected and
+        // hand the user an actionable error instead of a faulted state.
+        let mut runtime = state.inner.runtime.lock().await;
+        runtime.previous = previous;
+        runtime.connection = ConnectionStatePayload {
+            status: ConnectionStatus::Disconnected,
+            profile_id: None,
+            proxy_port: None,
+        };
+        emit_connection(&runtime.connection);
+        return Err(CommandError::PortInUse);
     }
 
     let previous = if settings.system_proxy_enabled {

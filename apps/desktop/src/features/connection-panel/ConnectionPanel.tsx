@@ -47,11 +47,19 @@ export function ConnectionPanel() {
       // The connection slot belongs to another connect/disconnect. Report
       // that distinctly and keep the real state; it is not a connection fault.
       // A running probe does not block Connect, so no probe gating here.
-      if (commandErrorCode(error) === "connection_busy") {
+      const code = commandErrorCode(error);
+      if (code === "connection_busy") {
         setNotice("Connection operation in progress");
         return;
       }
-      setState({ status: "faulted", profileId: null, proxyPort: null });
+      if (code === "port_in_use") {
+        setNotice(
+          "Proxy port is in use by another program. Change it in Settings or stop that program, then reconnect.",
+        );
+        return;
+      }
+      // The native layer owns the faulted state: it emits `connection-state`
+      // when a core actually dies. A rejected command is not a crash.
       setNotice("Connection failed");
     } finally {
       setBusy(false);
@@ -68,7 +76,6 @@ export function ConnectionPanel() {
         setNotice("Connection operation in progress");
         return;
       }
-      setState({ status: "faulted", profileId: null, proxyPort: null });
       setNotice("Disconnect failed");
     } finally {
       setBusy(false);

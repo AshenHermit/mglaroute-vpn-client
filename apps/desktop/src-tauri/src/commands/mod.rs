@@ -65,6 +65,8 @@ pub enum CommandError {
     Fetch,
     #[error("core failure")]
     Core,
+    #[error("proxy port is in use by another program")]
+    PortInUse,
     #[error("proxy failure")]
     Proxy,
     #[error("probe failure")]
@@ -581,6 +583,23 @@ mod tests {
         }
     }
 
+    /// Simulates a core that fails immediately (for example, because another
+    /// process already owns the proxy port). `wait_for_port` still succeeds
+    /// when that foreign listener is present.
+    struct ExitingLauncher;
+
+    impl CoreLauncher for ExitingLauncher {
+        fn launch(
+            &self,
+            _snapshot: &ConfigSnapshot,
+        ) -> std::result::Result<Box<dyn CoreHandle>, String> {
+            Ok(Box::new(FakeHandle {
+                exited: true,
+                stopped: Arc::new(AtomicBool::new(false)),
+            }))
+        }
+    }
+
     struct FailingStopHandle;
 
     impl CoreHandle for FailingStopHandle {
@@ -823,6 +842,45 @@ mod tests {
             select_connect_profile(&conn, Some("missing".to_string()))
                 .expect("select by id")
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_port_in_use_returns_distinct_error_without_faulted_event() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = false;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(InMemoryProxy::new(PreviousProxy::Direct)),
+            Box::new(ExitingLauncher),
+        );
+        let recorder = Arc::new(RecordingEventSink::new());
+        set_event_sink(recorder.clone());
+
+        {
+            let _permit = state.permit().expect("permit");
+            let error = connect_impl(&state, Some("p-1".to_string()))
+                .await
+                .expect_err("occupied port must surface");
+            assert_eq!(error, CommandError::PortInUse);
+        }
+
+        let runtime = state.inner.runtime.lock().await;
+        assert_eq!(runtime.connection.status, ConnectionStatus::Disconnected);
+        assert!(runtime.child.is_none());
+        assert!(
+            !recorder.events().iter().any(|(event, payload)| {
+                event == "connection-state" && payload["status"] == json!("faulted")
+            }),
+            "port conflict must not emit faulted state"
         );
     }
 

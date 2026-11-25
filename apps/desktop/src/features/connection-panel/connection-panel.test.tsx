@@ -116,4 +116,27 @@ describe("ConnectionPanel", () => {
     expect(queryByText("Connection faulted. Reconnect to continue.")).toBeNull();
     expect(getByTestId("connection-status").textContent).toBe("Disconnected");
   });
+
+  it("shows a clear port-in-use notice without entering faulted state", async () => {
+    const { getByRole, queryByText, getByTestId } = render(<ConnectionPanel />);
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "connection_status",
+        expect.anything(),
+      ),
+    );
+
+    mockedInvoke.mockRejectedValueOnce(
+      new CommandInvocationError("connection_connect", "port_in_use"),
+    );
+    fireEvent.click(getByRole("button", { name: "Connect" }));
+
+    await waitFor(() =>
+      expect(useAppStore.getState().notice).toBe(
+        "Proxy port is in use by another program. Change it in Settings or stop that program, then reconnect.",
+      ),
+    );
+    expect(queryByText("Connection faulted. Reconnect to continue.")).toBeNull();
+    expect(getByTestId("connection-status").textContent).toBe("Disconnected");
+  });
 });
