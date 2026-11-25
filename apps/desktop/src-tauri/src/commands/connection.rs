@@ -38,27 +38,40 @@ pub(crate) async fn connect_impl(
     let exclusions = exclusions(&settings);
 
     // A switch while connected must first give up ownership of the old
-    // connection. Stopping its core and restoring its proxy means the proxy
-    // read below is the user's original state, not our own local proxy.
-    let (mut old_child, old_previous, old_config) = {
+    // connection. Keep child/previous/config in runtime until both stop and
+    // restore succeed: on failure they remain recoverable (and the child is
+    // never orphaned). Stopping and restoring first also means the proxy read
+    // below is the user's original state, not our own local proxy.
+    let stopped = {
         let mut runtime = state.inner.runtime.lock().await;
-        (
-            runtime.child.take(),
-            runtime.previous.take(),
-            runtime.config_path.take(),
-        )
+        stop_child(&mut runtime.child)
     };
-    if !stop_child(&mut old_child) {
+    if !stopped {
         mark_faulted(state).await;
         return Err(CommandError::Core);
     }
+
+    let old_previous = state.inner.runtime.lock().await.previous.clone();
     if let Some(previous) = old_previous {
-        let runtime = state.inner.runtime.lock().await;
-        if runtime.proxy.restore(&previous).is_err() {
+        let mut restored = false;
+        for _ in 0..2 {
+            let runtime = state.inner.runtime.lock().await;
+            if runtime.proxy.restore(&previous).is_ok() {
+                restored = true;
+                break;
+            }
+        }
+        if !restored {
             mark_faulted(state).await;
             return Err(CommandError::Proxy);
         }
     }
+
+    let old_config = {
+        let mut runtime = state.inner.runtime.lock().await;
+        runtime.previous = None;
+        runtime.config_path.take()
+    };
     remove_config(&old_config);
 
     {
@@ -169,10 +182,29 @@ pub(crate) async fn disconnect_impl(
     };
 
     let stopped = stop_child(&mut child);
+    if !stopped && child.is_some() {
+        // `stop_child` kept the handle: leave it owned by the runtime so a
+        // later disconnect can retry instead of orphaning the process.
+        let mut runtime = state.inner.runtime.lock().await;
+        if runtime.child.is_none() {
+            runtime.child = child.take();
+        }
+    }
     let mut restored = true;
     if let Some(previous) = previous {
-        let runtime = state.inner.runtime.lock().await;
-        if runtime.proxy.restore(&previous).is_err() {
+        let mut ok = false;
+        for _ in 0..2 {
+            let runtime = state.inner.runtime.lock().await;
+            if runtime.proxy.restore(&previous).is_ok() {
+                ok = true;
+                break;
+            }
+        }
+        if !ok {
+            let mut runtime = state.inner.runtime.lock().await;
+            if runtime.previous.is_none() {
+                runtime.previous = Some(previous);
+            }
             restored = false;
         }
     }

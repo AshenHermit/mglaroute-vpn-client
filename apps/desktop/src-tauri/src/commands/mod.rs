@@ -336,11 +336,24 @@ pub async fn child_exit_watch(state: AppState) {
     }
 }
 
+/// Stops the child, retrying once. `ChildGuard` has no `Drop`, so a handle
+/// whose stop failed is put back into `child` instead of being dropped — the
+/// caller stays responsible for retrying and no process is orphaned.
 fn stop_child(child: &mut Option<Box<dyn CoreHandle>>) -> bool {
-    match child.take() {
-        Some(mut handle) => handle.stop().is_ok(),
-        None => true,
+    let Some(mut handle) = child.take() else {
+        return true;
+    };
+    if handle.try_wait().unwrap_or(false) {
+        return true;
     }
+    if handle.stop().is_ok() {
+        return true;
+    }
+    if handle.try_wait().unwrap_or(false) {
+        return true;
+    }
+    *child = Some(handle);
+    false
 }
 
 fn remove_config(path: &Option<PathBuf>) {
@@ -463,6 +476,18 @@ mod tests {
 
         fn try_wait(&mut self) -> std::result::Result<bool, String> {
             Ok(self.exited)
+        }
+    }
+
+    struct FailingStopHandle;
+
+    impl CoreHandle for FailingStopHandle {
+        fn stop(&mut self) -> std::result::Result<(), String> {
+            Err("stop failed".to_string())
+        }
+
+        fn try_wait(&mut self) -> std::result::Result<bool, String> {
+            Ok(false)
         }
     }
 
@@ -761,6 +786,23 @@ mod tests {
         stopped: Arc<AtomicBool>,
         exited: bool,
     ) -> std::path::PathBuf {
+        prepare_connected_child(
+            state,
+            profile_id,
+            previous,
+            port,
+            Box::new(FakeHandle { exited, stopped }),
+        )
+        .await
+    }
+
+    async fn prepare_connected_child(
+        state: &AppState,
+        profile_id: &str,
+        previous: PreviousProxy,
+        port: u16,
+        child: Box<dyn CoreHandle>,
+    ) -> std::path::PathBuf {
         let config_path = state
             .inner
             .config_dir
@@ -768,7 +810,7 @@ mod tests {
         std::fs::write(&config_path, "{}").expect("write temp config");
         let mut runtime = state.inner.runtime.lock().await;
         runtime.proxy.apply(port, &[]).expect("apply proxy");
-        runtime.child = Some(Box::new(FakeHandle { exited, stopped }));
+        runtime.child = Some(child);
         runtime.previous = Some(previous);
         runtime.config_path = Some(config_path.clone());
         runtime.connection = ConnectionStatePayload {
@@ -986,5 +1028,114 @@ mod tests {
                 .any(|(event, payload)| event == "connection-state" && *payload == expected),
             "connection-state event with camelCase payload must be emitted"
         );
+    }
+
+    #[tokio::test]
+    async fn switch_failure_preserves_old_core_and_proxy() {
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+
+        // Failed stop: the old child guard must stay owned, not be dropped.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let stopped = Arc::new(AtomicBool::new(false));
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(InMemoryProxy::new(original.clone())),
+            Box::new(FakeLauncher {
+                stopped: stopped.clone(),
+            }),
+        );
+        let config_path = prepare_connected_child(
+            &state,
+            "p-1",
+            original.clone(),
+            port,
+            Box::new(FailingStopHandle),
+        )
+        .await;
+        {
+            let _permit = state.permit().expect("permit");
+            let error = connect_impl(&state, Some("p-best".to_string()))
+                .await
+                .expect_err("stop failure must surface");
+            assert_eq!(error, CommandError::Core);
+        }
+        {
+            let runtime = state.inner.runtime.lock().await;
+            assert!(runtime.child.is_some(), "old core guard must stay owned");
+            assert_eq!(runtime.previous.as_ref(), Some(&original));
+            assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-1"));
+            assert_eq!(
+                runtime.proxy.current().expect("proxy still ours"),
+                PreviousProxy::Manual {
+                    server: proxy_string(port),
+                    override_list: override_string(&[]),
+                }
+            );
+        }
+        assert!(config_path.exists(), "old config must remain for recovery");
+
+        // Failed restore: previous proxy and config stay recoverable.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(FailingRestoreProxy::new(original.clone())),
+            Box::new(FakeLauncher {
+                stopped: Arc::new(AtomicBool::new(false)),
+            }),
+        );
+        let config_path = prepare_connected(
+            &state,
+            "p-1",
+            original.clone(),
+            port,
+            Arc::new(AtomicBool::new(false)),
+            false,
+        )
+        .await;
+        {
+            let _permit = state.permit().expect("permit");
+            let error = connect_impl(&state, Some("p-best".to_string()))
+                .await
+                .expect_err("restore failure must surface");
+            assert_eq!(error, CommandError::Proxy);
+        }
+        {
+            let runtime = state.inner.runtime.lock().await;
+            assert_eq!(
+                runtime.previous.as_ref(),
+                Some(&original),
+                "previous proxy must stay recoverable"
+            );
+            assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-1"));
+            assert_eq!(
+                runtime.proxy.current().expect("proxy still ours"),
+                PreviousProxy::Manual {
+                    server: proxy_string(port),
+                    override_list: override_string(&[]),
+                }
+            );
+        }
+        assert!(config_path.exists(), "old config must remain for recovery");
     }
 }
