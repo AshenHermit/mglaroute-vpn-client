@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Profile, Subscription } from "@mglaroute/contracts";
 
 vi.mock("../lib/invoke", () => ({ invoke: vi.fn() }));
@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import { invoke } from "../lib/invoke";
+import { useAppStore } from "../stores/app.store";
 import Dashboard from "./Dashboard";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -65,8 +66,18 @@ const profiles: Profile[] = Array.from({ length: 3 }, (_, index) => ({
 }));
 
 describe("Dashboard", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     vi.clearAllMocks();
+    act(() => {
+      useAppStore.setState({
+        probeTesting: false,
+        probeTestingIds: [],
+        probeCancelled: false,
+        notice: null,
+      });
+    });
     mockedInvoke.mockImplementation(async (command) => {
       if (command === "subscription_list") return subscriptions as never;
       if (command === "profile_list") return profiles as never;
@@ -91,5 +102,20 @@ describe("Dashboard", () => {
 
     expect((await screen.findAllByText("2")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("3")).length).toBeGreaterThan(0);
+  });
+
+  it("dashboard_shows_live_testing_state", async () => {
+    act(() => {
+      useAppStore.setState({
+        probeTesting: true,
+        probeTestingIds: ["p-0"],
+        probeTested: 1,
+        probeTotal: 3,
+      });
+    });
+    render(<Dashboard />);
+
+    expect(screen.getByText("Testing...")).toBeTruthy();
+    expect(screen.queryByText("No test cycle yet.")).toBeNull();
   });
 });

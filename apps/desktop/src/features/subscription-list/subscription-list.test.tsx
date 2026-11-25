@@ -1,10 +1,22 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SubscriptionSchema } from "@mglaroute/contracts";
 
-vi.mock("../../lib/invoke", () => ({ invoke: vi.fn() }));
+vi.mock("../../lib/invoke", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/invoke")>()),
+  invoke: vi.fn(),
+}));
 
+import App from "../../App";
 import { invoke } from "../../lib/invoke";
+import { useAppStore } from "../../stores/app.store";
 import { SubscriptionList } from "./SubscriptionList";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -26,8 +38,11 @@ const errored = {
 };
 
 describe("SubscriptionList", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     vi.clearAllMocks();
+    useAppStore.setState({ notice: null });
     mockedInvoke.mockImplementation(async (command) => {
       if (command === "subscription_add") {
         return { ...errored, id: "sub-2", name: "Added feed", status: "active" } as never;
@@ -109,5 +124,33 @@ describe("SubscriptionList", () => {
     await waitFor(() => expect(ui.getByText("Added feed")).toBeTruthy());
     const addedInterval = ui.getByLabelText(/refetch interval for added feed/i) as HTMLInputElement;
     expect(Number(addedInterval.value)).toBeGreaterThan(0);
+  });
+
+  const refreshErrors: Array<[Record<string, null>, string]> = [
+    [{ mutation_busy: null }, "Another operation is in progress. Try again shortly."],
+    [{ fetch: null }, "Could not reach subscription URL"],
+    [{ not_found: null }, "Subscription not found"],
+    [{ storage: null }, "Local storage error"],
+    [{ probe: null }, "Could not refresh subscription"],
+  ];
+
+  it.each(refreshErrors)("maps refresh error %j to notice %s", async (error, expected) => {
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "subscription_refresh") throw error;
+      if (command === "profile_list") return [] as never;
+      if (command === "anti_dpi_status") return { status: "unsupported" } as never;
+      if (command === "connection_status") {
+        return { status: "disconnected", profileId: null, proxyPort: null } as never;
+      }
+      return [errored] as never;
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Subscriptions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(expected),
+    );
   });
 });

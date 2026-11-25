@@ -1,7 +1,10 @@
 import {
   EVENTS,
   ProbeResultSchema,
+  ProbeServerEventSchema,
   SubscriptionSchema,
+  type ProbeResult,
+  type ProbeServerEvent,
   type Profile,
   type ServiceProfile,
   type Settings,
@@ -23,6 +26,9 @@ export type AppStore = {
   settings: Settings | null;
   probeTested: number;
   probeTotal: number;
+  probeTesting: boolean;
+  probeTestingIds: string[];
+  probeCancelled: boolean;
   lastProbeFinishedAt: string | null;
   notice: string | null;
   selectedProfileId: string | null;
@@ -31,7 +37,9 @@ export type AppStore = {
   setProfiles: (profiles: Profile[]) => void;
   setSettings: (settings: Settings) => void;
   setProbeProgress: (tested: number, total: number) => void;
-  setProbeFinished: (finishedAt: string) => void;
+  setProbeServer: (event: ProbeServerEvent) => void;
+  setProbeCancelled: () => void;
+  setProbeFinished: (result: ProbeResult) => void;
   setNotice: (notice: string | null) => void;
   setSelectedProfileId: (id: string | null) => void;
 };
@@ -43,6 +51,9 @@ export const useAppStore = create<AppStore>((set) => ({
   settings: null,
   probeTested: 0,
   probeTotal: 0,
+  probeTesting: false,
+  probeTestingIds: [],
+  probeCancelled: false,
   lastProbeFinishedAt: null,
   notice: null,
   // Session-only: which server the next Connect targets. Never persisted.
@@ -52,7 +63,21 @@ export const useAppStore = create<AppStore>((set) => ({
   setProfiles: (profiles) => set({ profiles }),
   setSettings: (settings) => set({ settings }),
   setProbeProgress: (probeTested, probeTotal) => set({ probeTested, probeTotal }),
-  setProbeFinished: (lastProbeFinishedAt) => set({ lastProbeFinishedAt }),
+  setProbeServer: (event) =>
+    set((state) => {
+      const ids = new Set(state.probeTestingIds);
+      if (event.status === "testing") ids.add(event.profileId);
+      else ids.delete(event.profileId);
+      return { probeTestingIds: [...ids], probeTesting: ids.size > 0 };
+    }),
+  setProbeCancelled: () => set({ probeCancelled: true }),
+  setProbeFinished: (result) =>
+    set({
+      probeTesting: false,
+      probeTestingIds: [],
+      probeCancelled: result.cancelled,
+      lastProbeFinishedAt: result.finishedAt,
+    }),
   setNotice: (notice) => set({ notice }),
   setSelectedProfileId: (selectedProfileId) => set({ selectedProfileId }),
 }));
@@ -60,6 +85,8 @@ export const useAppStore = create<AppStore>((set) => ({
 /** Subscribe to backend progress events. Payloads are validated before use. */
 export function useBackendEvents(): void {
   const setProbeProgress = useAppStore((store) => store.setProbeProgress);
+  const setProbeServer = useAppStore((store) => store.setProbeServer);
+  const setProbeCancelled = useAppStore((store) => store.setProbeCancelled);
   const setProbeFinished = useAppStore((store) => store.setProbeFinished);
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setNotice = useAppStore((store) => store.setNotice);
@@ -93,9 +120,21 @@ export function useBackendEvents(): void {
       }
     });
 
+    subscribe(EVENTS.probeServer, (payload) => {
+      const parsed = ProbeServerEventSchema.safeParse(payload);
+      if (parsed.success) setProbeServer(parsed.data);
+    });
+
+    subscribe(EVENTS.probeCancelled, () => {
+      setProbeCancelled();
+    });
+
     subscribe(EVENTS.probeFinished, (payload) => {
       const parsed = ProbeResultSchema.safeParse(payload);
-      if (parsed.success) setProbeFinished(parsed.data.finishedAt);
+      if (parsed.success) {
+        setProbeFinished(parsed.data);
+        if (parsed.data.cancelled) setNotice("Test cancelled");
+      }
     });
 
     subscribe(EVENTS.subscriptionRefreshed, (payload) => {
@@ -129,5 +168,12 @@ export function useBackendEvents(): void {
       active = false;
       cleanups.forEach((stop) => stop());
     };
-  }, [setProbeProgress, setProbeFinished, setSubscriptions, setNotice]);
+  }, [
+    setProbeProgress,
+    setProbeServer,
+    setProbeCancelled,
+    setProbeFinished,
+    setSubscriptions,
+    setNotice,
+  ]);
 }

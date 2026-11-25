@@ -1,5 +1,6 @@
 import { ProbeResultSchema, ProfileSchema } from "@mglaroute/contracts";
 import { useEffect } from "react";
+import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ServerTable } from "../features/server-table/ServerTable";
@@ -12,6 +13,8 @@ export default function Servers() {
   const setNotice = useAppStore((store) => store.setNotice);
   const tested = useAppStore((store) => store.probeTested);
   const total = useAppStore((store) => store.probeTotal);
+  const probeTesting = useAppStore((store) => store.probeTesting);
+  const probeTestingIds = useAppStore((store) => store.probeTestingIds);
   const selectedProfileId = useAppStore((store) => store.selectedProfileId);
   const setSelectedProfileId = useAppStore((store) => store.setSelectedProfileId);
 
@@ -34,7 +37,9 @@ export default function Servers() {
       const result = await invoke("probe_run", ProbeResultSchema);
       const rows = await invoke("profile_list", ProfileSchema.array());
       setProfiles(rows);
-      setNotice(`Tested ${result.tested} servers`);
+      setNotice(
+        result.cancelled ? "Test cancelled" : `Tested ${result.tested} servers`,
+      );
     } catch (error) {
       const code = commandErrorCode(error);
       if (code === "busy") {
@@ -47,22 +52,38 @@ export default function Servers() {
     }
   };
 
+  const stopProbe = async () => {
+    try {
+      await invoke("probe_cancel", z.boolean());
+    } catch {
+      setNotice("Could not stop server test");
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Servers</CardTitle>
         <div className="flex items-center gap-3">
-          {total > 0 && (
+          {(probeTesting || total > 0) && (
             <span className="text-xs text-slate-500">
               {tested} / {total}
             </span>
           )}
-          <Button onClick={() => void runProbe()}>Run test</Button>
+          <Button onClick={() => void runProbe()} disabled={probeTesting}>
+            {probeTesting ? "Testing..." : "Run test"}
+          </Button>
+          {probeTesting && (
+            <Button variant="secondary" onClick={() => void stopProbe()}>
+              Stop test
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
         <ServerTable
           profiles={profiles}
+          testingIds={probeTestingIds}
           selectedId={selectedProfileId}
           onSelect={setSelectedProfileId}
         />

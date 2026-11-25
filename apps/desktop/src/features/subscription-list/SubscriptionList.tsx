@@ -9,7 +9,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
-import { invoke } from "../../lib/invoke";
+import { commandErrorCode, invoke } from "../../lib/invoke";
 import { useAppStore } from "../../stores/app.store";
 
 const badgeStyles: Record<Subscription["status"], string> = {
@@ -71,8 +71,19 @@ export function SubscriptionList() {
       await invoke("subscription_refresh", RefreshResultSchema, { id });
       const rows = await invoke("subscription_list", SubscriptionSchema.array());
       showRows(rows);
-    } catch {
-      setNotice("Could not refresh subscription");
+    } catch (error) {
+      const code = commandErrorCode(error);
+      if (code === "mutation_busy") {
+        setNotice("Another operation is in progress. Try again shortly.");
+      } else if (code === "fetch") {
+        setNotice("Could not reach subscription URL");
+      } else if (code === "not_found") {
+        setNotice("Subscription not found");
+      } else if (code === "storage") {
+        setNotice("Local storage error");
+      } else {
+        setNotice("Could not refresh subscription");
+      }
     }
   };
 

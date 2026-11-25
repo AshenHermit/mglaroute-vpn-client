@@ -16,6 +16,7 @@ export default function Dashboard() {
   const setProfiles = useAppStore((store) => store.setProfiles);
   const tested = useAppStore((store) => store.probeTested);
   const total = useAppStore((store) => store.probeTotal);
+  const probeTesting = useAppStore((store) => store.probeTesting);
   const finishedAt = useAppStore((store) => store.lastProbeFinishedAt);
   const [antiDpi, setAntiDpi] = useState("unknown");
 
@@ -87,7 +88,9 @@ export default function Dashboard() {
           <CardTitle>Last test cycle</CardTitle>
         </CardHeader>
         <CardContent>
-          {total > 0 ? (
+          {probeTesting ? (
+            <p>Testing...</p>
+          ) : total > 0 ? (
             <p>
               Tested {tested} / {total}
             </p>
