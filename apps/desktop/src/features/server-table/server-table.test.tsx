@@ -1,0 +1,57 @@
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import type { Profile } from "@mglaroute/contracts";
+import { ServerTable } from "./ServerTable";
+
+function profile(
+  id: string,
+  latencyMs: number | null,
+  reachable: boolean,
+  sortIndex: number,
+): Profile {
+  return {
+    id,
+    subscriptionId: "sub-1",
+    serverId: id,
+    link: "vless://secret@node.example.com:443",
+    remarks: id,
+    protocol: "vless",
+    address: "node.example.com",
+    port: 443,
+    rawConfig: "{}",
+    present: true,
+    latencyMs,
+    reachable,
+    checkedAt: null,
+    sortIndex,
+    createdAt: "2026-11-24T00:00:00Z",
+    updatedAt: "2026-11-24T00:00:00Z",
+  };
+}
+
+describe("ServerTable", () => {
+  it("sorts by ascending delay and pushes failed servers last, greyed out", () => {
+    render(
+      <ServerTable
+        profiles={[
+          profile("p-slow", 40, true, 0),
+          profile("p-failed", 5, false, 1),
+          profile("p-fast", 10, true, 2),
+          profile("p-mid", 25, true, 3),
+        ]}
+      />,
+    );
+
+    const rows = screen.getAllByTestId("server-row");
+    expect(rows.map((row) => row.getAttribute("data-profile-id"))).toEqual([
+      "p-fast",
+      "p-mid",
+      "p-slow",
+      "p-failed",
+    ]);
+    expect(rows[0].textContent).toContain("10 ms");
+    expect(rows[1].textContent).toContain("25 ms");
+    expect(rows[3].textContent).toContain("failed");
+    expect(rows[3].className).toContain("opacity-60");
+  });
+});
