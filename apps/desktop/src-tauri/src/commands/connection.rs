@@ -38,8 +38,8 @@ pub fn select_connect_profile(
     }
 }
 
-/// Caller holds the mutation permit. Config generation and process launch both
-/// consume the same immutable `ConfigSnapshot`.
+/// Caller holds the connection permit. Config generation and process launch
+/// both consume the same immutable `ConfigSnapshot`.
 pub(crate) async fn connect_impl(
     state: &AppState,
     profile_id: Option<String>,
@@ -203,8 +203,8 @@ pub(crate) async fn connect_impl(
     Ok(runtime.connection.clone())
 }
 
-/// Caller holds the mutation permit. Restores the captured proxy state even if
-/// stopping the core fails, so the machine is never left behind our proxy.
+/// Caller holds the connection permit. Restores the captured proxy state even
+/// if stopping the core fails, so the machine is never left behind our proxy.
 pub(crate) async fn disconnect_impl(
     state: &AppState,
 ) -> Result<ConnectionStatePayload, CommandError> {

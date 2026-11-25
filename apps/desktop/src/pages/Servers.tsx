@@ -17,6 +17,7 @@ export default function Servers() {
   const probeTestingIds = useAppStore((store) => store.probeTestingIds);
   const selectedProfileId = useAppStore((store) => store.selectedProfileId);
   const setSelectedProfileId = useAppStore((store) => store.setSelectedProfileId);
+  const setProbeStarted = useAppStore((store) => store.setProbeStarted);
 
   useEffect(() => {
     let active = true;
@@ -33,6 +34,7 @@ export default function Servers() {
   }, [setProfiles, setNotice]);
 
   const runProbe = async () => {
+    setProbeStarted();
     try {
       const result = await invoke("probe_run", ProbeResultSchema);
       const rows = await invoke("profile_list", ProfileSchema.array());
@@ -42,7 +44,7 @@ export default function Servers() {
       );
     } catch (error) {
       const code = commandErrorCode(error);
-      if (code === "busy") {
+      if (code === "busy" || code === "probe_busy") {
         setNotice("Another operation is in progress. Try again shortly.");
       } else if (code === "probe") {
         setNotice("Server test failed. Check xray and the network, then retry.");

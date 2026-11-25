@@ -149,6 +149,8 @@ export function SettingsForm() {
             label="Test concurrency"
             value={form.testConcurrency}
             onChange={setNumber("testConcurrency")}
+            min={1}
+            max={20}
           />
           <NumberInput
             label="Reconnect cooldown (seconds)"
@@ -194,10 +196,14 @@ function NumberInput({
   label,
   value,
   onChange,
+  min = 0,
+  max,
 }: {
   label: string;
   value: number;
   onChange: (value: string) => void;
+  min?: number;
+  max?: number;
 }) {
   const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   return (
@@ -208,7 +214,8 @@ function NumberInput({
       <Input
         id={id}
         type="number"
-        min={0}
+        min={min}
+        max={max}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />

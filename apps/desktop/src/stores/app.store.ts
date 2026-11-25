@@ -38,6 +38,7 @@ export type AppStore = {
   setSettings: (settings: Settings) => void;
   setProbeProgress: (tested: number, total: number) => void;
   setProbeServer: (event: ProbeServerEvent) => void;
+  setProbeStarted: () => void;
   setProbeCancelled: () => void;
   setProbeFinished: (result: ProbeResult) => void;
   setNotice: (notice: string | null) => void;
@@ -66,9 +67,28 @@ export const useAppStore = create<AppStore>((set) => ({
   setProbeServer: (event) =>
     set((state) => {
       const ids = new Set(state.probeTestingIds);
-      if (event.status === "testing") ids.add(event.profileId);
-      else ids.delete(event.profileId);
+      if (event.status === "testing") {
+        // First `testing` row of a run starts it: clear a stale cancellation
+        // left by a previous stopped cycle (also covers backend auto-test).
+        const starting = ids.size === 0;
+        ids.add(event.profileId);
+        return {
+          probeTestingIds: [...ids],
+          probeTesting: true,
+          ...(starting && state.probeCancelled ? { probeCancelled: false } : {}),
+        };
+      }
+      ids.delete(event.profileId);
       return { probeTestingIds: [...ids], probeTesting: ids.size > 0 };
+    }),
+  setProbeStarted: () =>
+    set({
+      // `probeTesting` stays event-driven: a `ProbeBusy` rejection happens
+      // before any cycle starts, so pre-setting it would stick with Run
+      // disabled and no terminal event to clear it.
+      probeCancelled: false,
+      probeTested: 0,
+      probeTotal: 0,
     }),
   setProbeCancelled: () => set({ probeCancelled: true }),
   setProbeFinished: (result) =>

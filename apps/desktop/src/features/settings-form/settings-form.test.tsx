@@ -66,6 +66,15 @@ describe("SettingsForm", () => {
     );
   });
 
+  it("constrains test concurrency to 1..20 inline", async () => {
+    render(<SettingsForm />);
+    const input = (await screen.findByRole("spinbutton", {
+      name: /test concurrency/i,
+    })) as HTMLInputElement;
+    expect(input.min).toBe("1");
+    expect(input.max).toBe("20");
+  });
+
   it("offers retry instead of hanging on settings load failure", async () => {
     mockedInvoke.mockRejectedValueOnce(new Error("boom"));
     render(<SettingsForm />);

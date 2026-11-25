@@ -354,7 +354,9 @@ impl ProbeProgress for TauriProgress {
     }
 
     fn on_cancelled(&self) {
-        crate::state::emit("probe-cancelled", json!({}));
+        // `probe_cancel` owns this event and emits it exactly once when the
+        // stop is accepted. Keep the trait method but never emit here, so a
+        // future caller cannot resurrect a duplicate `probe-cancelled`.
     }
 
     fn on_finished(&self, outcome: &ProbeOutcome) {
@@ -403,6 +405,59 @@ async fn probe_profile_with_core(
     }
 }
 
+/// HTTP half of one probe: the two delay GETs plus every active service check,
+/// all through `proxy_url`. Cancellation is observed while requests are in
+/// flight — spec §2 requires checking the flag between GETs — so `Stop test`
+/// never waits out `test_timeout_ms` per core. Returns `None` on cancel; the
+/// caller still stops the core and removes both sidecars.
+async fn probe_http_phase(
+    profile: &Profile,
+    services: &[ServiceProfile],
+    settings: &Settings,
+    proxy_url: &str,
+    mut cancel: watch::Receiver<bool>,
+) -> Option<ProbeSample> {
+    if *cancel.borrow() {
+        return None;
+    }
+    let timeout = Duration::from_millis(settings.test_timeout_ms.max(1) as u64);
+    let http = async {
+        let latency_ms = measure_delay(proxy_url, &settings.ping_url, timeout).await;
+        let mut service_results = Vec::with_capacity(services.len());
+        for service in services {
+            // Malformed stored JSON yields no URLs; the check then fails the
+            // service without exposing its contents.
+            let urls = serde_json::from_str::<Vec<String>>(&service.test_urls).unwrap_or_default();
+            let reachable = check_service_profile(&urls, proxy_url, timeout).await;
+            service_results.push(ProbeServiceResult {
+                service_profile_id: service.id.clone(),
+                reachable,
+            });
+        }
+        ProbeSample {
+            profile_id: profile.id.clone(),
+            latency_ms,
+            service_results,
+        }
+    };
+
+    let mut http = Box::pin(http);
+    loop {
+        tokio::select! {
+            changed = cancel.changed() => {
+                if changed.is_err() {
+                    // Sender gone: no further stop can arrive, finish HTTP.
+                    return Some(http.await);
+                }
+                if *cancel.borrow() {
+                    return None;
+                }
+            }
+            sample = &mut http => return Some(sample),
+        }
+    }
+}
+
 async fn probe_core_once(
     profile: &Profile,
     services: &[ServiceProfile],
@@ -446,26 +501,17 @@ async fn probe_core_once(
         if *ctx.cancel.borrow() {
             return Ok(None);
         }
-        let timeout = Duration::from_millis(settings.test_timeout_ms.max(1) as u64);
         let proxy_url = format!("http://127.0.0.1:{port}");
-        let latency_ms = measure_delay(&proxy_url, &settings.ping_url, timeout).await;
-
-        let mut service_results = Vec::with_capacity(services.len());
-        for service in services {
-            // Malformed stored JSON yields no URLs; the check then fails the
-            // service without exposing its contents.
-            let urls = serde_json::from_str::<Vec<String>>(&service.test_urls).unwrap_or_default();
-            let reachable = check_service_profile(&urls, &proxy_url, timeout).await;
-            service_results.push(ProbeServiceResult {
-                service_profile_id: service.id.clone(),
-                reachable,
-            });
-        }
-        Ok(Some(ProbeSample {
-            profile_id: profile.id.clone(),
-            latency_ms,
-            service_results,
-        }))
+        // A fresh receiver is registered with `changed()` inside the helper so
+        // a stop landing at any point of the HTTP phase is observed immediately.
+        Ok(probe_http_phase(
+            profile,
+            services,
+            settings,
+            &proxy_url,
+            (*ctx.cancel).clone(),
+        )
+        .await)
     }
     .await;
 
@@ -1052,5 +1098,36 @@ mod tests {
             progress.finished.lock().expect("lock finished").as_slice(),
             &[outcome]
         );
+    }
+
+    /// A stop fired while the delay/service GETs are in flight must abort the
+    /// HTTP phase promptly instead of waiting out `test_timeout_ms` per core.
+    #[tokio::test]
+    async fn cancellation_during_http_phase_aborts_probe() {
+        use crate::probe::test_support::spawn_mock_proxy;
+
+        // `silent` proxy accepts the connection but never replies, so the HTTP
+        // phase cannot finish on its own within the test's deadline.
+        let proxy = spawn_mock_proxy(&[], true);
+        let settings = Settings {
+            test_timeout_ms: 5000,
+            ..Settings::default()
+        };
+        let profile = test_profile("p-1", "srv-1", 0);
+        let services: Vec<ServiceProfile> = Vec::new();
+        let (tx, rx) = watch::channel(false);
+        let stopper = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            tx.send(true).expect("send cancellation");
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(400),
+            probe_http_phase(&profile, &services, &settings, &proxy, rx),
+        )
+        .await
+        .expect("HTTP phase must observe cancellation promptly");
+        assert!(result.is_none(), "cancelled HTTP phase yields no sample");
+        stopper.await.expect("stopper task");
     }
 }

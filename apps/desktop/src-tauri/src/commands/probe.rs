@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::atomic::Ordering;
 
 use chrono::{DateTime, Utc};
 
@@ -12,8 +11,8 @@ use tokio::sync::watch;
 use super::connection::{connect_impl, disconnect_impl};
 use super::{AppState, CommandError, ConnectionStatus};
 use crate::probe::cycle::{
-    persist_probe_samples, probe_cycle_detached, PersistOptions, ProbeOutcome, TauriProgress,
-    XrayProbeTransport,
+    persist_probe_samples, probe_cycle_detached, PersistOptions, ProbeOutcome, ProbeProgress,
+    TauriProgress, XrayProbeTransport,
 };
 use crate::reconnect::{decide_reconnect, ReconnectDecision};
 use crate::storage::models::{Profile, Settings};
@@ -172,10 +171,32 @@ pub(crate) async fn apply_reconnect(
 /// Caller holds the probe permit. Auto-reconnect is gated by `apply_reconnect`
 /// (manual runs pass `false`); the last-switch timestamp is recorded here after
 /// a successful switch — the pure `decide_reconnect` function owns neither.
+/// On any error a terminal `probe-finished` is emitted so the UI cannot remain
+/// stuck in Testing... with Run disabled; success emits it in
+/// `persist_probe_samples`, so the two paths never duplicate the event.
 pub(crate) async fn run_impl(
     state: &AppState,
     apply_reconnect: bool,
     cancel: watch::Receiver<bool>,
+    progress: &dyn ProbeProgress,
+) -> Result<ProbeOutcome, CommandError> {
+    let result = run_impl_inner(state, apply_reconnect, cancel, progress).await;
+    if result.is_err() {
+        progress.on_finished(&ProbeOutcome {
+            tested: 0,
+            sorted: 0,
+            finished_at: Utc::now(),
+            cancelled: false,
+        });
+    }
+    result
+}
+
+async fn run_impl_inner(
+    state: &AppState,
+    apply_reconnect: bool,
+    cancel: watch::Receiver<bool>,
+    progress: &dyn ProbeProgress,
 ) -> Result<ProbeOutcome, CommandError> {
     // Read inputs in a short lock scope. The probe itself can take seconds per
     // server; holding the shared SQLite mutex across it makes `settings_get`
@@ -194,7 +215,7 @@ pub(crate) async fn run_impl(
         &services,
         &settings,
         &XrayProbeTransport,
-        &TauriProgress,
+        progress,
         cancel.clone(),
     )
     .await?;
@@ -205,7 +226,7 @@ pub(crate) async fn run_impl(
         persist_probe_samples(
             &mut conn,
             &samples,
-            &TauriProgress,
+            progress,
             PersistOptions {
                 sort: !cancelled,
                 cancelled,
@@ -229,7 +250,7 @@ pub(crate) async fn run_impl(
 pub async fn probe_run(state: State<'_, AppState>) -> Result<ProbeOutcome, CommandError> {
     let _permit = state.probe_permit()?;
     let cancel = state.start_probe();
-    let result = run_impl(&state, false, cancel).await;
+    let result = run_impl(&state, false, cancel, &TauriProgress).await;
     state.finish_probe();
     result
 }
@@ -242,7 +263,15 @@ pub async fn probe_run(state: State<'_, AppState>) -> Result<ProbeOutcome, Comma
 // unless it returns `Result`. The IPC payload stays a plain boolean.
 #[tauri::command]
 pub fn probe_cancel(state: State<'_, AppState>) -> bool {
-    if !state.inner.probe_running.load(Ordering::SeqCst) {
+    // Hold the running-flag lock across the check and the send so a stop
+    // observed for cycle A cannot land after A's `finish_probe()` and B's
+    // `start_probe()`, cancelling the freshly started cycle B.
+    let running = state
+        .inner
+        .probe_running
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !*running {
         return false;
     }
     // `send_replace` is atomic: racing stop requests emit at most one event.

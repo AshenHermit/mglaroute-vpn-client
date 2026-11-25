@@ -250,4 +250,29 @@ describe("app store backend events", () => {
     expect(state.probeCancelled).toBe(true);
     expect(screen.getByRole("status").textContent).toContain("Test cancelled");
   });
+
+  it("a new backend test run clears a stale probeCancelled", () => {
+    act(() => {
+      useAppStore.setState({
+        probeCancelled: true,
+        probeTesting: false,
+        probeTestingIds: [],
+      });
+    });
+    render(<App />);
+
+    act(() => {
+      eventHandler("probe-server")?.({
+        payload: {
+          profileId: "p-1",
+          status: "testing",
+          latencyMs: null,
+          serviceResults: [],
+        },
+      } as never);
+    });
+
+    expect(useAppStore.getState().probeCancelled).toBe(false);
+    expect(useAppStore.getState().probeTesting).toBe(true);
+  });
 });

@@ -5,7 +5,6 @@
 //! snake_case. No URL, credential, raw config or generated config is logged.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -171,7 +170,10 @@ struct AppStateInner {
     config_dir: PathBuf,
     launcher: Box<dyn CoreLauncher>,
     job: Arc<JobHandle>,
-    probe_running: AtomicBool,
+    // Guarded by a std Mutex so `probe_cancel` can check "running" and send the
+    // stop flag atomically with `start_probe`/`finish_probe`. A std lock is
+    // required because the cancel command is sync (no await while held).
+    probe_running: std::sync::Mutex<bool>,
     probe_cancel_tx: watch::Sender<bool>,
 }
 
@@ -221,7 +223,7 @@ impl AppState {
                 config_dir,
                 launcher,
                 job,
-                probe_running: AtomicBool::new(false),
+                probe_running: std::sync::Mutex::new(false),
                 probe_cancel_tx: watch::Sender::new(false),
             }),
         }
@@ -254,8 +256,16 @@ impl AppState {
 
     /// Begin a cycle: clear any previous stop request, mark the probe as
     /// running (so `probe_cancel` is accepted) and hand out the watch receiver.
+    /// The same lock as `probe_cancel`/`finish_probe` makes the flag flip and
+    /// the cancel-flag reset one atomic step, so a stale stop cannot land in a
+    /// newly started cycle.
     pub fn start_probe(&self) -> watch::Receiver<bool> {
-        self.inner.probe_running.store(true, Ordering::SeqCst);
+        let mut running = self
+            .inner
+            .probe_running
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *running = true;
         self.inner.probe_cancel_tx.send_replace(false);
         self.inner.probe_cancel_tx.subscribe()
     }
@@ -263,7 +273,12 @@ impl AppState {
     /// End a cycle. `probe-cancelled` is emitted by `probe_cancel` when the
     /// stop is accepted, never by the cycle or by this method.
     pub fn finish_probe(&self) {
-        self.inner.probe_running.store(false, Ordering::SeqCst);
+        let mut running = self
+            .inner
+            .probe_running
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *running = false;
     }
 
     fn permit(&self) -> std::result::Result<MutationPermit, CommandError> {
@@ -498,7 +513,13 @@ pub async fn auto_test_loop(state: AppState) {
         if enabled {
             if let Ok(_permit) = state.probe_permit() {
                 let cancel = state.start_probe();
-                let _ = probe::run_impl(&state, true, cancel).await;
+                let _ = probe::run_impl(
+                    &state,
+                    true,
+                    cancel,
+                    &crate::probe::cycle::TauriProgress,
+                )
+                .await;
                 state.finish_probe();
             }
         }
@@ -517,6 +538,7 @@ mod tests {
 
     use super::*;
     use crate::anti_dpi;
+    use crate::probe::cycle::{ProbeOutcome, ProbeProgress};
     use crate::commands::connection::{connect_impl, select_connect_profile};
     use crate::commands::probe::{apply_reconnect, candidates};
     use crate::platform::proxy::{
@@ -1490,5 +1512,47 @@ mod tests {
             );
         }
         assert!(config_path.exists(), "old config must remain for recovery");
+    }
+
+    /// A probe that fails before persistence must still emit one terminal
+    /// `probe-finished`, otherwise the UI stays `probeTesting=true` with Run
+    /// disabled forever. The success path emits in `persist_probe_samples`.
+    #[derive(Default)]
+    struct FinishingProgress {
+        finished: std::sync::Mutex<Vec<ProbeOutcome>>,
+    }
+
+    impl ProbeProgress for FinishingProgress {
+        fn on_server(&self, _event: &crate::probe::cycle::ProbeServerEvent) {}
+        fn on_progress(&self, _tested: usize, _total: usize) {}
+        fn on_cancelled(&self) {}
+        fn on_finished(&self, outcome: &ProbeOutcome) {
+            self.finished
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(outcome.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_failure_emits_exactly_one_terminal_finished_event() {
+        let state = state_with_fake_launcher();
+        // Drop the settings table so `run_impl` fails before any cycle starts.
+        {
+            let conn = state.inner.conn.lock().await;
+            conn.execute_batch("DROP TABLE settings;")
+                .expect("drop settings table");
+        }
+        let progress = FinishingProgress::default();
+        let (_tx, rx) = watch::channel(false);
+
+        let result = probe::run_impl(&state, false, rx, &progress).await;
+        assert_eq!(result.err(), Some(CommandError::Storage));
+
+        let finished = progress.finished.lock().expect("lock finished");
+        assert_eq!(finished.len(), 1, "exactly one terminal event on error");
+        assert_eq!(finished[0].tested, 0);
+        assert_eq!(finished[0].sorted, 0);
+        assert!(!finished[0].cancelled);
     }
 }
