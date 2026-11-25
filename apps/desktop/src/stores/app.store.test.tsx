@@ -192,6 +192,8 @@ describe("app store backend events", () => {
     });
     expect(useAppStore.getState().probeTesting).toBe(false);
     expect(useAppStore.getState().probeTestingIds).toEqual([]);
+    expect(useAppStore.getState().profiles[0]?.latencyMs).toBe(12);
+    expect(useAppStore.getState().profiles[0]?.reachable).toBe(false);
 
     act(() => {
       eventHandler("probe-server")?.({
@@ -215,6 +217,90 @@ describe("app store backend events", () => {
     });
     expect(useAppStore.getState().probeTesting).toBe(false);
     expect(useAppStore.getState().probeTestingIds).toEqual([]);
+  });
+
+  it("patches done and failed rows before probe_run settles", () => {
+    render(<App />);
+
+    act(() => {
+      eventHandler("probe-server")?.({
+        payload: {
+          profileId: "p-1",
+          status: "testing",
+          latencyMs: null,
+          serviceResults: [],
+        },
+      } as never);
+    });
+    act(() => {
+      eventHandler("probe-server")?.({
+        payload: {
+          profileId: "p-1",
+          status: "done",
+          latencyMs: 50,
+          serviceResults: [{ serviceProfileId: "default-google", reachable: true }],
+        },
+      } as never);
+    });
+    expect(useAppStore.getState().profiles[0]?.latencyMs).toBe(50);
+    expect(useAppStore.getState().profiles[0]?.reachable).toBe(true);
+    expect(useAppStore.getState().probeTestingIds).toEqual([]);
+
+    act(() => {
+      eventHandler("probe-server")?.({
+        payload: {
+          profileId: "p-1",
+          status: "failed",
+          latencyMs: null,
+          serviceResults: [],
+        },
+      } as never);
+    });
+    expect(useAppStore.getState().profiles[0]?.latencyMs).toBe(null);
+    expect(useAppStore.getState().profiles[0]?.reachable).toBe(false);
+  });
+
+  it("cancelled removes highlight without overwriting the row", () => {
+    render(<App />);
+
+    act(() => {
+      eventHandler("probe-server")?.({
+        payload: {
+          profileId: "p-1",
+          status: "done",
+          latencyMs: 30,
+          serviceResults: [{ serviceProfileId: "default-google", reachable: true }],
+        },
+      } as never);
+    });
+    expect(useAppStore.getState().profiles[0]?.latencyMs).toBe(30);
+    expect(useAppStore.getState().profiles[0]?.reachable).toBe(true);
+
+    act(() => {
+      eventHandler("probe-server")?.({
+        payload: {
+          profileId: "p-1",
+          status: "testing",
+          latencyMs: null,
+          serviceResults: [],
+        },
+      } as never);
+    });
+    expect(useAppStore.getState().probeTestingIds).toEqual(["p-1"]);
+
+    act(() => {
+      eventHandler("probe-server")?.({
+        payload: {
+          profileId: "p-1",
+          status: "cancelled",
+          latencyMs: null,
+          serviceResults: [],
+        },
+      } as never);
+    });
+    expect(useAppStore.getState().probeTestingIds).toEqual([]);
+    expect(useAppStore.getState().profiles[0]?.latencyMs).toBe(30);
+    expect(useAppStore.getState().profiles[0]?.reachable).toBe(true);
   });
 
   it("reports cancellation and clears testing state on probe-finished", () => {

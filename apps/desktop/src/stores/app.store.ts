@@ -80,7 +80,21 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }
       ids.delete(event.profileId);
-      return { probeTestingIds: [...ids], probeTesting: ids.size > 0 };
+      const highlight = { probeTestingIds: [...ids], probeTesting: ids.size > 0 };
+      // A stop has no sample: keep the row values from the last real result.
+      if (event.status === "cancelled") return highlight;
+      // Patch the row from the terminal event itself. The database is written
+      // only after the whole cycle, so waiting for `profile_list` would leave
+      // the table stale for the rest of the run.
+      const latencyMs = event.status === "done" ? event.latencyMs : null;
+      const reachable =
+        event.status === "done" &&
+        event.serviceResults.length > 0 &&
+        event.serviceResults.every((result) => result.reachable);
+      const profiles = state.profiles.map((profile) =>
+        profile.id === event.profileId ? { ...profile, latencyMs, reachable } : profile,
+      );
+      return { ...highlight, profiles };
     }),
   setProbeStarted: (ids) =>
     set({
