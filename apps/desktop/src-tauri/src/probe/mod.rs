@@ -2,6 +2,7 @@ pub mod cycle;
 pub mod delay;
 pub mod scheduler;
 pub mod service_check;
+pub mod temp;
 
 pub use cycle::{run_probe_cycle, ProbeOutcome};
 pub use delay::measure_delay;

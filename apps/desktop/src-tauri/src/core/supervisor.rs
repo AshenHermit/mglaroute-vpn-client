@@ -4,11 +4,12 @@
 
 use std::env;
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::core::job::JobHandle;
 use crate::core::snapshot::ConfigSnapshot;
 
 pub const BINARY_PATH_ENV: &str = "XRAY_BINARY_PATH";
@@ -23,18 +24,15 @@ pub enum SupervisorError {
 
 pub type Result<T> = std::result::Result<T, SupervisorError>;
 
-/// Resolve the xray binary: `XRAY_BINARY_PATH`, then explicit override, then
-/// the build-time bundled `binaries/xray.exe` (Windows x64) / `binaries/xray`.
+/// Resolve the xray binary: `XRAY_BINARY_PATH`, then explicit override, then a
+/// sidecar next to the running executable (dev and installed builds), then the
+/// build-time bundled `binaries/xray.exe` (Windows x64) / `binaries/xray`.
 pub fn binary_path(override_path: Option<&str>) -> PathBuf {
-    if let Some(value) = env::var_os(BINARY_PATH_ENV).filter(|value| !value.is_empty()) {
-        return PathBuf::from(value);
-    }
-    if let Some(value) = override_path.filter(|value| !value.is_empty()) {
-        return PathBuf::from(value);
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(if cfg!(windows) { "xray.exe" } else { "xray" })
+    let exe_dir = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    let env_path = env::var_os(BINARY_PATH_ENV);
+    binary_path_from(exe_dir.as_deref(), override_path, env_path.as_deref())
 }
 
 /// Build a xray invocation for one snapshot. stdout/stderr go to null so raw
@@ -68,24 +66,34 @@ pub fn wait_for_port(port: u16, timeout: Duration) -> Result<()> {
 
 /// Owns a spawned xray child and reaps it on `stop`. `Drop` is a backstop for
 /// panics/early returns that skip `stop`: no child is left behind on shutdown.
-///
-/// Follow-up: wrap the child in a Windows Job Object so grandchild processes
-/// are killed too; not required for MVP.
 pub struct ChildGuard {
     child: Child,
 }
 
 impl ChildGuard {
-    /// Spawn xray for `snapshot` using the null-redirected command builder.
-    pub fn spawn(snapshot: &ConfigSnapshot) -> Result<Self> {
-        Ok(Self {
-            child: build_command(snapshot)?.spawn()?,
-        })
+    /// Spawn xray for `snapshot` and immediately assign it to `job` when one
+    /// is supplied. A failed assignment kills and waits for the child before
+    /// surfacing the error — an unmanaged core is never left running.
+    pub fn spawn(snapshot: &ConfigSnapshot, job: Option<&JobHandle>) -> Result<Self> {
+        let mut child = build_command(snapshot)?.spawn()?;
+        if let Some(job) = job {
+            if let Err(error) = job.assign(&child) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SupervisorError::Spawn(error));
+            }
+        }
+        Ok(Self { child })
     }
 
     /// Adopt an already spawned child (e.g. a temporary core for probing).
     pub fn new(child: Child) -> Self {
         Self { child }
+    }
+
+    /// PID of the owned child, for the probe PID sidecar.
+    pub fn id(&self) -> u32 {
+        self.child.id()
     }
 
     /// Non-blocking exit check for the watcher task. `Ok(None)` means the
@@ -114,6 +122,30 @@ impl Drop for ChildGuard {
     }
 }
 
+/// Pure resolution helper used by [`binary_path`] and tested without touching
+/// the real executable directory.
+pub fn binary_path_from(
+    exe_dir: Option<&std::path::Path>,
+    override_path: Option<&str>,
+    env_path: Option<&std::ffi::OsStr>,
+) -> PathBuf {
+    if let Some(value) = env_path.filter(|value| !value.is_empty()) {
+        return PathBuf::from(value);
+    }
+    if let Some(value) = override_path.filter(|value| !value.is_empty()) {
+        return PathBuf::from(value);
+    }
+    if let Some(dir) = exe_dir {
+        let sidecar = dir.join(if cfg!(windows) { "xray.exe" } else { "xray" });
+        if sidecar.exists() {
+            return sidecar;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(if cfg!(windows) { "xray.exe" } else { "xray" })
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::{OsStr, OsString};
@@ -123,6 +155,7 @@ mod tests {
     use std::time::{Duration, Instant};
     use std::{env, process::Command};
 
+    use crate::core::job::{reap_orphans_with, JobHandle};
     use crate::core::snapshot::snapshot_for;
     use crate::storage::models::Profile;
 
@@ -226,6 +259,87 @@ mod tests {
         assert!(
             elapsed < Duration::from_millis(1500),
             "timeout took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn binary_path_prefers_sidecar_next_to_executable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sidecar = dir.path().join(exe_name());
+        std::fs::write(&sidecar, b"xray").expect("write sidecar");
+        let _env = lock_env(BINARY_PATH_ENV);
+        env::remove_var(BINARY_PATH_ENV);
+
+        assert_eq!(binary_path_from(Some(dir.path()), None, None), sidecar);
+    }
+
+    #[test]
+    fn reaping_only_kills_verified_xray() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_path = dir.path().join("mglaroute-probe-42-1.pid");
+        std::fs::write(&pid_path, "4242").unwrap();
+        let killed = std::cell::Cell::new(0);
+        let count = reap_orphans_with(
+            dir.path(),
+            |_pid, _config| false,
+            |_pid| killed.set(killed.get() + 1),
+        )
+        .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(killed.get(), 0);
+        assert!(pid_path.exists(), "suspect sidecar stays for inspection");
+    }
+
+    #[test]
+    fn reaping_kills_and_cleans_verified_xray() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_path = dir.path().join("mglaroute-probe-42-1.pid");
+        let config_path = dir.path().join("mglaroute-probe-42-1.json");
+        std::fs::write(&pid_path, "4242").unwrap();
+        std::fs::write(&config_path, "{}").unwrap();
+        let seen = std::cell::Cell::new(0);
+        let killed = std::cell::Cell::new(0);
+        let count = reap_orphans_with(
+            dir.path(),
+            |pid, config| {
+                seen.set(pid);
+                config == config_path.as_path()
+            },
+            |pid| {
+                assert_eq!(pid, 4242);
+                killed.set(killed.get() + 1);
+            },
+        )
+        .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(seen.get(), 4242);
+        assert_eq!(killed.get(), 1);
+        assert!(!pid_path.exists(), "verified pid sidecar must be removed");
+        assert!(!config_path.exists(), "verified config must be removed");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn job_object_kills_child_tree_on_handle_close() {
+        let job = JobHandle::create().expect("create job");
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "timeout /T 30"])
+            .spawn()
+            .expect("spawn cmd");
+        job.assign(&child).expect("assign child to job");
+        assert!(
+            child.try_wait().expect("poll").is_none(),
+            "child must still be alive before job close"
+        );
+        drop(job);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while child.try_wait().expect("poll").is_none() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            child.try_wait().expect("poll").is_some(),
+            "closing the job handle must kill the child tree"
         );
     }
 

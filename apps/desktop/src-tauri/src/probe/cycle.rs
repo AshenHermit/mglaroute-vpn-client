@@ -3,9 +3,8 @@
 
 use std::future::Future;
 use std::net::{Ipv4Addr, TcpListener};
-use std::path::PathBuf;
 use std::pin::Pin;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
@@ -13,8 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::core::config::build_speedtest_config;
+use crate::core::job::JobHandle;
 use crate::core::snapshot::ConfigSnapshot;
-use crate::core::supervisor::{build_command, wait_for_port, ChildGuard};
+use crate::core::supervisor::{wait_for_port, ChildGuard};
+use crate::probe::temp::ProbeTempFiles;
 use crate::probe::{check_service_profile, measure_delay};
 use crate::storage::models::{Profile, ServiceProfile, Settings};
 use crate::storage::repos::{profile_repo, service_profile_repo};
@@ -229,17 +230,6 @@ fn free_ports(count: usize) -> Result<Vec<u16>> {
         .collect()
 }
 
-fn temp_config_path() -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
-    std::env::temp_dir().join(format!(
-        "mglaroute-probe-{}-{nanos}.json",
-        std::process::id()
-    ))
-}
-
 async fn probe_batch_with_core(
     profiles: &[Profile],
     services: &[ServiceProfile],
@@ -251,29 +241,41 @@ async fn probe_batch_with_core(
 
     let ports = free_ports(profiles.len())?;
     let config = build_speedtest_config(profiles, &ports)?;
-    let config_path = temp_config_path();
+    let files = ProbeTempFiles::new()?;
     let snapshot = ConfigSnapshot {
         subscription_id: profiles[0].subscription_id.clone(),
         profile: profiles[0].clone(),
         proxy_port: ports[0],
-        config_path: config_path.clone(),
+        config_path: files.config_path.clone(),
         anti_dpi: None,
     };
-    // `build_command` null-redirects stdout/stderr so config credentials never
-    // reach a log sink. It only needs the path, not the file itself.
-    let mut command = build_command(&snapshot)?;
-    std::fs::write(&config_path, serde_json::to_string(&config)?)?;
+    std::fs::write(&files.config_path, serde_json::to_string(&config)?)?;
 
-    let mut guard = match command.spawn() {
-        Ok(child) => ChildGuard::new(child),
+    // Each batch owns its own job so a crash kills the whole core tree. The
+    // command builder null-redirects stdout/stderr: config never reaches a log.
+    let job = match JobHandle::create() {
+        Ok(job) => job,
         Err(error) => {
-            let _ = std::fs::remove_file(&config_path);
+            files.cleanup();
             return Err(error.into());
         }
     };
+    let mut guard = match ChildGuard::spawn(&snapshot, Some(&job)) {
+        Ok(guard) => guard,
+        Err(error) => {
+            files.cleanup();
+            return Err(error.into());
+        }
+    };
+    if let Err(error) = files.write_pid(guard.id()) {
+        let _ = guard.stop();
+        files.cleanup();
+        return Err(error.into());
+    }
+
     let probed = probe_through_ports(profiles, services, settings, &ports).await;
     let stopped = guard.stop();
-    let _ = std::fs::remove_file(&config_path);
+    files.cleanup();
 
     let samples = probed?;
     stopped?;

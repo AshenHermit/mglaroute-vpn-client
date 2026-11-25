@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 use tokio::time::MissedTickBehavior;
 
 use crate::anti_dpi::AntiDpiStatus;
+use crate::core::job::{reap_orphans, JobHandle};
 use crate::core::snapshot::ConfigSnapshot;
 use crate::core::supervisor::{binary_path, ChildGuard, SupervisorError};
 use crate::platform::proxy::{load_previous, PreviousProxy, ProxyBackend};
@@ -134,15 +135,18 @@ impl CoreHandle for XrayCoreHandle {
 }
 
 /// Resolves the binary with `core::supervisor::binary_path` (env → override →
-/// bundled) before spawning, so a missing binary is reported generically.
-pub struct XrayLauncher;
+/// bundled) before spawning, so a missing binary is reported generically. The
+/// shared job owns every connection core started through this launcher.
+pub struct XrayLauncher {
+    job: Arc<JobHandle>,
+}
 
 impl CoreLauncher for XrayLauncher {
     fn launch(&self, snapshot: &ConfigSnapshot) -> std::result::Result<Box<dyn CoreHandle>, String> {
         if !binary_path(None).exists() {
             return Err("core binary unavailable".to_string());
         }
-        ChildGuard::spawn(snapshot)
+        ChildGuard::spawn(snapshot, Some(&self.job))
             .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
             .map_err(|_| "failed to start core".to_string())
     }
@@ -165,6 +169,7 @@ struct AppStateInner {
     runtime: Mutex<RuntimeState>,
     config_dir: PathBuf,
     launcher: Box<dyn CoreLauncher>,
+    job: Arc<JobHandle>,
 }
 
 #[derive(Clone)]
@@ -173,11 +178,24 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Test constructor: owns no job, so a fake launcher needs no Win32 setup.
     pub fn new(
         conn: Connection,
         config_dir: PathBuf,
         proxy: Box<dyn ProxyBackend + Send + Sync>,
         launcher: Box<dyn CoreLauncher>,
+    ) -> Self {
+        Self::new_with_job(conn, config_dir, proxy, launcher, Arc::new(JobHandle::noop()))
+    }
+
+    /// Production constructor: keeps the shared job alive for as long as the
+    /// state (and therefore its connection cores) exists.
+    pub fn new_with_job(
+        conn: Connection,
+        config_dir: PathBuf,
+        proxy: Box<dyn ProxyBackend + Send + Sync>,
+        launcher: Box<dyn CoreLauncher>,
+        job: Arc<JobHandle>,
     ) -> Self {
         Self {
             inner: Arc::new(AppStateInner {
@@ -199,8 +217,14 @@ impl AppState {
                 }),
                 config_dir,
                 launcher,
+                job,
             }),
         }
+    }
+
+    /// Shared job owning this state's connection cores.
+    pub fn job(&self) -> Arc<JobHandle> {
+        self.inner.job.clone()
     }
 
     fn connection_permit(&self) -> std::result::Result<MutationPermit, CommandError> {
@@ -231,13 +255,19 @@ impl AppState {
     }
 }
 
-/// Open storage, seed defaults and restore a proxy captured before a prior
-/// process exit. No auto-connect: the operator decides when to reconnect.
+/// Open storage, seed defaults, reap stale probe cores, then restore a proxy
+/// captured before a prior process exit. No auto-connect: the operator decides
+/// when to reconnect.
 pub fn bootstrap(dir: &Path) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;
     let mut conn = Connection::open(dir.join("client.db"))?;
     migrate(&conn)?;
     ensure_defaults_on_empty(&mut conn)?;
+
+    // Reap before restoring the proxy: verification rejects recycled PIDs and
+    // never reads or logs config contents.
+    reap_orphans(&std::env::temp_dir())?;
+    let job = Arc::new(JobHandle::create()?);
 
     let proxy_path = dir.join("proxy_previous.json");
     let proxy: Box<dyn ProxyBackend + Send + Sync> =
@@ -247,11 +277,12 @@ pub fn bootstrap(dir: &Path) -> std::result::Result<AppState, Box<dyn std::error
         proxy.restore(&previous)?;
     }
 
-    Ok(AppState::new(
+    Ok(AppState::new_with_job(
         conn,
         dir.to_path_buf(),
         proxy,
-        Box::new(XrayLauncher),
+        Box::new(XrayLauncher { job: job.clone() }),
+        job,
     ))
 }
 
