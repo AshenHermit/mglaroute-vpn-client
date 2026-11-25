@@ -190,10 +190,10 @@ describe("app store backend events", () => {
         },
       } as never);
     });
-    expect(useAppStore.getState().probeTesting).toBe(false);
+    expect(useAppStore.getState().probeTesting).toBe(true);
     expect(useAppStore.getState().probeTestingIds).toEqual([]);
     expect(useAppStore.getState().profiles[0]?.latencyMs).toBe(12);
-    expect(useAppStore.getState().profiles[0]?.reachable).toBe(false);
+    expect(useAppStore.getState().profiles[0]?.reachable).toBe(true);
 
     act(() => {
       eventHandler("probe-server")?.({
@@ -215,7 +215,28 @@ describe("app store backend events", () => {
         },
       } as never);
     });
-    expect(useAppStore.getState().probeTesting).toBe(false);
+    expect(useAppStore.getState().probeTesting).toBe(true);
+    expect(useAppStore.getState().probeTestingIds).toEqual([]);
+  });
+
+  it("keeps the run active between servers when no row is highlighted", () => {
+    act(() => {
+      useAppStore.setState({ probeTesting: true, probeTestingIds: ["p-1"] });
+    });
+    render(<App />);
+
+    act(() => {
+      eventHandler("probe-server")?.({
+        payload: {
+          profileId: "p-1",
+          status: "done",
+          latencyMs: 12,
+          serviceResults: [],
+        },
+      } as never);
+    });
+
+    expect(useAppStore.getState().probeTesting).toBe(true);
     expect(useAppStore.getState().probeTestingIds).toEqual([]);
   });
 

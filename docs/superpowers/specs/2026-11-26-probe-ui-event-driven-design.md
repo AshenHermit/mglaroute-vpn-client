@@ -62,8 +62,9 @@ immediately.
   ids.length` for the `tested / total` counter.
 - `app.store.ts` `setProbeServer`: on `testing`, add the id; on `done`/`failed`,
   remove it and map the matching profile to new `latencyMs`/`reachable`; on
-  `cancelled`, only remove it. `reachable` for `done` is `serviceResults.length >
-  0 && serviceResults.every(r => r.reachable)`; `failed` forces `false`.
+  `cancelled`, only remove it. `reachable` for `done` is
+  `serviceResults.every(r => r.reachable)` (an empty list passes, matching the
+  backend's `all()`); `failed` forces `false`.
 - `Servers.tsx` keeps the existing click/finally flow; no concurrency logic.
 - Tests: one `testing` event highlights exactly one row even when the candidate
   list has many; terminal event patches the row before `probe_run` settles;

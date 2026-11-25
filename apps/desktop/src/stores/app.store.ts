@@ -80,17 +80,20 @@ export const useAppStore = create<AppStore>((set) => ({
         };
       }
       ids.delete(event.profileId);
-      const highlight = { probeTestingIds: [...ids], probeTesting: ids.size > 0 };
+      // Row highlights are independent from the run itself: with concurrency 1
+      // the last id can be gone while `probe_run` is still pending. Only
+      // `setProbeSettled` / `probe-finished` end the run; a terminal row event
+      // must not re-enable Run mid-cycle.
+      const highlight = { probeTestingIds: [...ids] };
       // A stop has no sample: keep the row values from the last real result.
       if (event.status === "cancelled") return highlight;
       // Patch the row from the terminal event itself. The database is written
       // only after the whole cycle, so waiting for `profile_list` would leave
-      // the table stale for the rest of the run.
+      // the table stale for the rest of the run. Empty serviceResults count as
+      // passing, matching the backend's `all()` over service results.
       const latencyMs = event.status === "done" ? event.latencyMs : null;
       const reachable =
-        event.status === "done" &&
-        event.serviceResults.length > 0 &&
-        event.serviceResults.every((result) => result.reachable);
+        event.status === "done" && event.serviceResults.every((result) => result.reachable);
       const profiles = state.profiles.map((profile) =>
         profile.id === event.profileId ? { ...profile, latencyMs, reachable } : profile,
       );
