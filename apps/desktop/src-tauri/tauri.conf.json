@@ -25,6 +25,7 @@
     "active": true,
     "targets": "all",
     "icon": [],
-    "externalBin": []
+    "externalBin": ["binaries/xray"],
+    "resources": ["binaries/antiddpi/**/*"]
   }
 }
