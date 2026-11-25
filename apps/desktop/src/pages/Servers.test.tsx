@@ -79,4 +79,32 @@ describe("Servers probe controls", () => {
     const [button] = screen.getAllByRole("button", { name: /Testing/ });
     expect(button.querySelector(".animate-spin")).not.toBeNull();
   });
+
+  it("shows testing state on click before any backend event arrives", async () => {
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "profile_list") return [server] as never;
+      // Never settles: the click must update the UI synchronously.
+      return await new Promise(() => undefined);
+    });
+    render(<Servers />);
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run test" }));
+
+    expect(useAppStore.getState().probeTesting).toBe(true);
+    expect(useAppStore.getState().probeTestingIds).toEqual(["p-1"]);
+    expect(screen.getByRole("button", { name: "Stop test" })).not.toBeNull();
+    expect(screen.getByTestId("server-row").textContent).toContain("Testing...");
+  });
+
+  it("clears testing state when probe_run fails", async () => {
+    render(<Servers />);
+    fireEvent.click(screen.getByRole("button", { name: "Run test" }));
+
+    await waitFor(() =>
+      expect(useAppStore.getState().probeTesting).toBe(false),
+    );
+    expect(useAppStore.getState().probeTestingIds).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Stop test" })).toBeNull();
+  });
 });

@@ -38,7 +38,8 @@ export type AppStore = {
   setSettings: (settings: Settings) => void;
   setProbeProgress: (tested: number, total: number) => void;
   setProbeServer: (event: ProbeServerEvent) => void;
-  setProbeStarted: () => void;
+  setProbeStarted: (ids: string[]) => void;
+  setProbeSettled: () => void;
   setProbeCancelled: () => void;
   setProbeFinished: (result: ProbeResult) => void;
   setNotice: (notice: string | null) => void;
@@ -81,15 +82,21 @@ export const useAppStore = create<AppStore>((set) => ({
       ids.delete(event.profileId);
       return { probeTestingIds: [...ids], probeTesting: ids.size > 0 };
     }),
-  setProbeStarted: () =>
+  setProbeStarted: (ids) =>
     set({
-      // `probeTesting` stays event-driven: a `ProbeBusy` rejection happens
-      // before any cycle starts, so pre-setting it would stick with Run
-      // disabled and no terminal event to clear it.
+      // Optimistic start: the spinner, Stop button and highlighted rows must
+      // appear on click, even if `probe-server` events coalesce or are lost.
+      // `runProbe` clears this state in `finally` on every exit path.
+      probeTesting: true,
+      probeTestingIds: ids,
       probeCancelled: false,
       probeTested: 0,
-      probeTotal: 0,
+      probeTotal: ids.length,
     }),
+  // The invoke promise is the authoritative end of a manual run: a fast
+  // failure may emit no terminal `probe-server` event at all. Keep backend
+  // `probeFinished` responsible for `probeCancelled`/`lastProbeFinishedAt`.
+  setProbeSettled: () => set({ probeTesting: false, probeTestingIds: [] }),
   setProbeCancelled: () => set({ probeCancelled: true }),
   setProbeFinished: (result) =>
     set({

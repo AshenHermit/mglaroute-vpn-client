@@ -18,6 +18,7 @@ export default function Servers() {
   const selectedProfileId = useAppStore((store) => store.selectedProfileId);
   const setSelectedProfileId = useAppStore((store) => store.setSelectedProfileId);
   const setProbeStarted = useAppStore((store) => store.setProbeStarted);
+  const setProbeSettled = useAppStore((store) => store.setProbeSettled);
 
   useEffect(() => {
     let active = true;
@@ -34,7 +35,7 @@ export default function Servers() {
   }, [setProfiles, setNotice]);
 
   const runProbe = async () => {
-    setProbeStarted();
+    setProbeStarted(profiles.map((profile) => profile.id));
     try {
       const result = await invoke("probe_run", ProbeResultSchema);
       const rows = await invoke("profile_list", ProfileSchema.array());
@@ -51,6 +52,8 @@ export default function Servers() {
       } else {
         setNotice("Could not run server test");
       }
+    } finally {
+      setProbeSettled();
     }
   };
 
