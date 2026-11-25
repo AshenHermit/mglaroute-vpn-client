@@ -118,16 +118,21 @@ docs/superpowers/specs/   design docs
 - `test_concurrency` (settings/contract) defaults to `10` (v2rayN
   `MixedConcurrencyCount`), clamped `1..=20`; stored in `settings.test_concurrency`
   behind `PRAGMA user_version = 2` (v1 → v2 `ALTER TABLE` migration).
-- Per-server probe events are the authoritative per-server progress: `probe-server`
+- Per-server probe events drive live row state: `probe-server`
   (`status: testing | done | failed | cancelled`, `latencyMs`, `serviceResults`)
   fires before spawn and after each result; `probe-progress` after each server;
   `probe-cancelled` on accepted Stop; `probe-finished` (`cancelled: bool`) at the
-  end. Payload shapes live in `packages/contracts/src/schemas.ts`.
-- Manual Run test also sets optimistic batch state on click (spinner, Stop test,
-  all selected rows marked) and clears it in `finally`. A fast `probe_busy`
-  or cycle error emits no per-server event, so event-only state would leave the
-  UI frozen with no visible feedback. Backend events refine the batch as
-  results arrive; `probe-finished` keeps `cancelled`/`finishedAt` authoritative.
+  end. A row is highlighted only for the exact `profileId` in a `testing` event;
+  its terminal event removes the highlight and immediately patches `latencyMs`
+  and `reachable` in the table. `cancelled` removes the highlight but keeps the
+  previous result. Payload shapes live in `packages/contracts/src/schemas.ts`.
+- Manual Run test sets only optimistic `probeTesting` on click (spinner, Stop
+  test) and clears it in `finally`; it starts with `probeTestingIds: []` and
+  never reads `test_concurrency`. A fast `probe_busy` or cycle error emits no
+  per-server event, so this keeps visible feedback without lying about which
+  cores actually run. The final `profile_list` re-fetch stays authoritative for
+  persisted rows; `checkedAt` is not synthesized client-side. `probe-finished`
+  keeps `cancelled`/`finishedAt` authoritative.
 - Three independent guards emit distinct busy codes: `connection_busy`
   (connect/disconnect/apply_reconnect), `probe_busy` (probe_run/auto-test),
   `mutation_busy` (subscriptions/settings/refetch). `probe_busy` never blocks
