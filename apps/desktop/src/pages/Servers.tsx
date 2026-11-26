@@ -1,4 +1,8 @@
-import { ProbeResultSchema, ProfileSchema } from "@mglaroute/contracts";
+import {
+  ConnectionStateSchema,
+  ProbeResultSchema,
+  ProfileSchema,
+} from "@mglaroute/contracts";
 import { useEffect } from "react";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
@@ -6,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { ServerTable } from "../features/server-table/ServerTable";
 import { commandErrorCode, invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
+import { useConnectionStore } from "../stores/connection.store";
 
 export default function Servers() {
   const profiles = useAppStore((store) => store.profiles);
@@ -19,6 +24,8 @@ export default function Servers() {
   const setSelectedProfileId = useAppStore((store) => store.setSelectedProfileId);
   const setProbeStarted = useAppStore((store) => store.setProbeStarted);
   const setProbeSettled = useAppStore((store) => store.setProbeSettled);
+  const connection = useConnectionStore((store) => store.state);
+  const setConnectionState = useConnectionStore((store) => store.setState);
 
   useEffect(() => {
     let active = true;
@@ -33,6 +40,19 @@ export default function Servers() {
       active = false;
     };
   }, [setProfiles, setNotice]);
+
+  const setActive = async (profileId: string) => {
+    setSelectedProfileId(profileId);
+    if (connection.status !== "connected") return;
+    try {
+      const next = await invoke("connection_connect", ConnectionStateSchema, {
+        profileId,
+      });
+      setConnectionState(next);
+    } catch {
+      setNotice("Connection failed");
+    }
+  };
 
   const runProbe = async () => {
     setProbeStarted(profiles.map((profile) => profile.id));
@@ -100,7 +120,8 @@ export default function Servers() {
           profiles={profiles}
           testingIds={probeTestingIds}
           selectedId={selectedProfileId}
-          onSelect={setSelectedProfileId}
+          connectedId={connection.profileId}
+          onSelect={(id) => void setActive(id)}
         />
       </CardContent>
     </Card>

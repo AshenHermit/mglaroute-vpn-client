@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Profile } from "@mglaroute/contracts";
+import { ConnectionStateSchema, type Profile } from "@mglaroute/contracts";
 import { CommandInvocationError } from "../lib/invoke";
 
 // Keep the real error-code mapping; only the IPC transport is faked.
@@ -11,6 +11,7 @@ vi.mock("../lib/invoke", async (importOriginal) => {
 
 import { invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
+import { useConnectionStore } from "../stores/connection.store";
 import Servers from "./Servers";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -47,6 +48,9 @@ describe("Servers probe controls", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    useConnectionStore.setState({
+      state: { status: "disconnected", profileId: null, proxyPort: null },
+    });
     useAppStore.setState({
       profiles: [server, otherServer],
       probeTesting: false,
@@ -142,5 +146,54 @@ describe("Servers probe controls", () => {
     );
     expect(useAppStore.getState().probeTestingIds).toEqual([]);
     expect(screen.queryByRole("button", { name: "Stop test" })).toBeNull();
+  });
+
+  it("sets the active server without connecting when disconnected", async () => {
+    useConnectionStore.setState({
+      state: { status: "disconnected", profileId: null, proxyPort: null },
+    });
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "profile_list") return [server, otherServer] as never;
+      return await new Promise(() => undefined);
+    });
+    render(<Servers />);
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(2));
+    const p2 = screen.getAllByTestId("server-power").find(
+      (button) => button.getAttribute("data-profile-id") === "p-2",
+    );
+    fireEvent.click(p2!);
+    expect(useAppStore.getState().selectedProfileId).toBe("p-2");
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      "connection_connect",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("switches the live connection when power is clicked while connected", async () => {
+    useConnectionStore.setState({
+      state: { status: "connected", profileId: "p-1", proxyPort: 10809 },
+    });
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "profile_list") return [server, otherServer] as never;
+      if (command === "connection_connect") {
+        return { status: "connected", profileId: "p-2", proxyPort: 10809 } as never;
+      }
+      return await new Promise(() => undefined);
+    });
+    render(<Servers />);
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(2));
+    const p2 = screen.getAllByTestId("server-power").find(
+      (button) => button.getAttribute("data-profile-id") === "p-2",
+    );
+    fireEvent.click(p2!);
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "connection_connect",
+        ConnectionStateSchema,
+        { profileId: "p-2" },
+      ),
+    );
+    expect(useAppStore.getState().selectedProfileId).toBe("p-2");
   });
 });
