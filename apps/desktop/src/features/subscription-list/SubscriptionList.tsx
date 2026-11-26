@@ -15,7 +15,7 @@ import { useAppStore } from "../../stores/app.store";
 const badgeStyles: Record<Subscription["status"], string> = {
   active: "bg-primary/15 text-primary",
   inactive: "bg-muted text-muted-foreground",
-  error: "bg-red-100 text-red-700",
+  error: "bg-destructive/15 text-destructive",
 };
 
 export function SubscriptionList() {

@@ -57,7 +57,7 @@ describe("SubscriptionList", () => {
     await waitFor(() => expect(screen.getByText("Primary feed")).toBeTruthy());
     const badge = screen.getByTestId("subscription-status-sub-1");
     expect(badge.textContent).toBe("error");
-    expect(badge.className).toContain("text-red");
+    expect(badge.className).toContain("text-destructive");
 
     fireEvent.change(screen.getByLabelText(/subscription url/i), {
       target: { value: "https://feed.example/sub" },
