@@ -324,7 +324,7 @@ describe("app store backend events", () => {
     expect(useAppStore.getState().profiles[0]?.reachable).toBe(true);
   });
 
-  it("reports cancellation and clears testing state on probe-finished", () => {
+  it("reports cancellation and clears testing state on probe-finished", async () => {
     act(() => {
       useAppStore.setState({
         probeTesting: true,
@@ -355,11 +355,11 @@ describe("app store backend events", () => {
     expect(state.probeTesting).toBe(false);
     expect(state.probeTestingIds).toEqual([]);
     expect(state.probeCancelled).toBe(true);
-    expect(
-      screen
-        .getAllByRole("status")
-        .some((node) => node.textContent?.includes("Test cancelled")),
-    ).toBe(true);
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: /Notifications/ }).textContent).toContain(
+        "Test cancelled",
+      ),
+    );
   });
 
   it("a new backend test run clears a stale probeCancelled", () => {

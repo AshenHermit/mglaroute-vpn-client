@@ -1,35 +1,40 @@
-import { CircleCheck, Info, Loader2, OctagonX, TriangleAlert } from "lucide-react";
-import type { CSSProperties, ComponentProps } from "react";
-import { Toaster as Sonner } from "sonner";
-
-type ToasterProps = ComponentProps<typeof Sonner>;
+import {
+  CircleCheckIcon,
+  InfoIcon,
+  Loader2Icon,
+  OctagonXIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
+import type { CSSProperties } from "react";
+import { Toaster as Sonner, type ToasterProps } from "sonner";
 
 /** shadcn Sonner wrapper, pinned to the app's dark neutral tokens. */
-export function Toaster(props: ToasterProps) {
-  return (
-    <Sonner
-      theme="dark"
-      position="bottom-right"
-      offset={16}
-      className="toaster group"
-      icons={{
-        success: <CircleCheck className="size-4" />,
-        info: <Info className="size-4" />,
-        warning: <TriangleAlert className="size-4" />,
-        error: <OctagonX className="size-4" />,
-        loading: <Loader2 className="size-4 animate-spin" />,
-      }}
-      style={
-        {
-          "--normal-bg": "var(--popover, oklch(0.21 0 0))",
-          "--normal-text": "var(--popover-foreground, oklch(0.93 0 0))",
-          "--normal-border": "var(--border)",
-          "--success-color": "var(--primary)",
-          "--error-color": "var(--destructive)",
-          "--border-radius": "var(--radius)",
-        } as CSSProperties
-      }
-      {...props}
-    />
-  );
-}
+const Toaster = ({ ...props }: ToasterProps) => (
+  <Sonner
+    theme="dark"
+    position="bottom-right"
+    offset={16}
+    className="toaster group"
+    icons={{
+      success: <CircleCheckIcon className="size-4" />,
+      info: <InfoIcon className="size-4" />,
+      warning: <TriangleAlertIcon className="size-4" />,
+      error: <OctagonXIcon className="size-4" />,
+      loading: <Loader2Icon className="size-4 animate-spin" />,
+    }}
+    style={
+      {
+        "--width": "min(360px, calc(100vw - 24px))",
+        "--normal-bg": "var(--popover)",
+        "--normal-text": "var(--popover-foreground)",
+        "--normal-border": "var(--border)",
+        "--success-color": "var(--primary)",
+        "--error-color": "var(--destructive)",
+        "--border-radius": "var(--radius)",
+      } as CSSProperties
+    }
+    {...props}
+  />
+);
+
+export { Toaster };

@@ -15,6 +15,8 @@
   --background: oklch(0.16 0 0);       /* shell */
   --foreground: oklch(0.93 0 0);
   --card: oklch(0.21 0 0);             /* panes */
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
   --muted: oklch(0.27 0 0);            /* hover / inactive */
   --muted-foreground: oklch(0.72 0 0);
   --primary: oklch(0.72 0.17 150);     /* green accent */
@@ -76,7 +78,7 @@
 }
 
 @media (max-width: 639px) {
-  .sonner-toaster {
-    bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+  [data-sonner-toaster] {
+    --offset-bottom: calc(72px + env(safe-area-inset-bottom)) !important;
   }
 }
