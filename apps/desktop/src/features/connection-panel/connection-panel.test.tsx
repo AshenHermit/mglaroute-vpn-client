@@ -213,7 +213,31 @@ describe("ConnectionPanel", () => {
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
   });
 
-  it("gives the power ring the green accent only while connected", async () => {
+  it("keeps Disconnect available while a backend-driven connection is in flight", async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      status: "connecting",
+      profileId: "p-1",
+      proxyPort: null,
+    });
+    render(<ConnectionPanel />);
+
+    const power = await screen.findByRole("button", { name: "Disconnect" });
+    expect((power as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(power);
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "connection_disconnect",
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("shows the green ring and the connected server while connected", async () => {
+    act(() => {
+      useAppStore.setState({
+        profiles: [makeProfile("p-1", "node 1", "node.example.com")],
+      });
+    });
     mockedInvoke.mockResolvedValueOnce({
       status: "connected",
       profileId: "p-1",
@@ -224,6 +248,11 @@ describe("ConnectionPanel", () => {
     const power = await screen.findByRole("button", { name: "Disconnect" });
     expect(power.className).toContain("ring-2");
     expect(power.className).toContain("ring-primary");
+
+    const active = screen.getByTestId("active-server");
+    expect(active.getAttribute("data-state")).toBe("connected");
+    expect(active.textContent).toContain("node 1");
+    expect(active.textContent).toContain("node.example.com");
 
     act(() => {
       useConnectionStore.getState().setState(disconnected);

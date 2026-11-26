@@ -158,7 +158,7 @@ export function ConnectionPanel() {
               type="button"
               aria-label={powerName}
               onClick={() => void (connected || connecting ? disconnect() : connect())}
-              disabled={busy || connecting}
+              disabled={busy}
               className={cn(
                 "flex size-28 min-h-11 min-w-11 items-center justify-center rounded-full border border-border bg-muted text-foreground transition-transform hover:scale-[1.03] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
                 connected &&

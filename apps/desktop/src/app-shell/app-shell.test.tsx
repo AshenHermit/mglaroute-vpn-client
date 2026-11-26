@@ -109,16 +109,35 @@ describe("AppShell", () => {
     expect(screen.getByText("By subscription")).toBeTruthy();
   });
 
-  it("mounts the connection panel inside the right zone", () => {
+  it("mounts the connection panel with the connected server inside the right zone", async () => {
     render(<AppShell />);
 
     const rightZone = screen.getByTestId("right-zone");
+    await waitFor(() =>
+      expect(within(rightZone).getByTestId("connection-status").textContent).toBe(
+        "Disconnected",
+      ),
+    );
+    expect(
+      within(rightZone).getByTestId("active-server").getAttribute("data-state"),
+    ).toBe("none");
+    expect(screen.queryByTestId("right-placeholder")).toBeNull();
+
+    act(() => {
+      useAppStore.setState({ profiles });
+      useConnectionStore.getState().setState({
+        status: "connected",
+        profileId: "p-1",
+        proxyPort: 10808,
+      });
+    });
+
     expect(within(rightZone).getByTestId("connection-status").textContent).toBe(
-      "Disconnected",
+      "Connected",
     );
     const active = within(rightZone).getByTestId("active-server");
-    expect(active.getAttribute("data-state")).toBe("none");
-    expect(screen.queryByTestId("right-placeholder")).toBeNull();
+    expect(active.getAttribute("data-state")).toBe("connected");
+    expect(active.textContent).toContain("node 1");
   });
 
   it("sets the favorites filter from the rail", () => {
