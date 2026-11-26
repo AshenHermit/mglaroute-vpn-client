@@ -122,6 +122,23 @@ export const AntiDpiStatusSchema = z.object({
 });
 export type AntiDpiStatus = z.infer<typeof AntiDpiStatusSchema>;
 
+export const UpdateInfoSchema = z.object({
+  version: z.string(),
+  currentVersion: z.string(),
+  notes: z.string().nullable(),
+  pubDate: timestamp.nullable(),
+  canInstallInApp: z.boolean(),
+  releaseUrl: z.string(),
+});
+export type UpdateInfo = z.infer<typeof UpdateInfoSchema>;
+
+export const UpdateProgressEventSchema = z.object({
+  phase: z.enum(["downloading", "installing", "done"]),
+  received: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative().nullable(),
+});
+export type UpdateProgressEvent = z.infer<typeof UpdateProgressEventSchema>;
+
 export const EVENTS = {
   probeProgress: "probe-progress",
   probeServer: "probe-server",
@@ -129,4 +146,5 @@ export const EVENTS = {
   probeFinished: "probe-finished",
   connectionState: "connection-state",
   subscriptionRefreshed: "subscription-refreshed",
+  updateProgress: "update-progress",
 } as const;
