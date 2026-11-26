@@ -39,7 +39,13 @@ function RailButton({
 }
 
 /** Left navigation rail: real filters only, real durable-data counters. */
-export function ServerRail({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function ServerRail({
+  onOpenSettings,
+  onOpenServers,
+}: {
+  onOpenSettings: () => void;
+  onOpenServers: () => void;
+}) {
   const subscriptions = useAppStore((store) => store.subscriptions);
   const serverCount = useAppStore((store) => store.profiles.length);
   const filter = useUiStore((state) => state.filter);
@@ -86,19 +92,28 @@ export function ServerRail({ onOpenSettings }: { onOpenSettings: () => void }) {
           active={filter.kind === "all"}
           label="All servers"
           icon={<Server aria-hidden="true" className="h-5 w-5 shrink-0" />}
-          onClick={() => setFilter({ kind: "all" })}
+          onClick={() => {
+            setFilter({ kind: "all" });
+            onOpenServers();
+          }}
         />
         <RailButton
           active={filter.kind === "favorites"}
           label="Favorites"
           icon={<Star aria-hidden="true" className="h-5 w-5 shrink-0" />}
-          onClick={() => setFilter({ kind: "favorites" })}
+          onClick={() => {
+            setFilter({ kind: "favorites" });
+            onOpenServers();
+          }}
         />
         <RailButton
           active={filter.kind === "reachable"}
           label="Reachable only"
           icon={<Signal aria-hidden="true" className="h-5 w-5 shrink-0" />}
-          onClick={() => setFilter({ kind: "reachable" })}
+          onClick={() => {
+            setFilter({ kind: "reachable" });
+            onOpenServers();
+          }}
         />
 
         <h2 className="sr-only mt-4 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground lg:not-sr-only">
@@ -112,9 +127,10 @@ export function ServerRail({ onOpenSettings }: { onOpenSettings: () => void }) {
             }
             label={subscription.name}
             icon={<Globe aria-hidden="true" className="h-5 w-5 shrink-0" />}
-            onClick={() =>
-              setFilter({ kind: "subscription", subscriptionId: subscription.id })
-            }
+            onClick={() => {
+              setFilter({ kind: "subscription", subscriptionId: subscription.id });
+              onOpenServers();
+            }}
           />
         ))}
       </nav>

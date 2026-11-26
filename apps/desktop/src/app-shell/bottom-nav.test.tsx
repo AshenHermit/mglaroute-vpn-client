@@ -30,7 +30,7 @@ describe("BottomNav", () => {
     }
   });
 
-  it("wires each tab to its own callback, with More as the only sheet opener", () => {
+  it("wires each tab to its own callback, with More as the only settings opener", () => {
     const { onConnect, onServers, onMore } = setup();
 
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));

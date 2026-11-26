@@ -53,10 +53,6 @@ const subscriptions: Subscription[] = [
   },
 ];
 
-// animate-ui keeps the dialog mounted while it animates out; `data-state`
-// records whether it is actually open.
-const dialogState = () => screen.queryByRole("dialog")?.getAttribute("data-state") ?? "absent";
-
 describe("AppShell portrait navigation", () => {
   afterEach(cleanup);
 
@@ -75,7 +71,7 @@ describe("AppShell portrait navigation", () => {
         lastProbeFinishedAt: null,
         selectedProfileId: null,
       });
-      useUiStore.setState({ favorites: [], filter: { kind: "all" }, sheetTab: "subscriptions" });
+      useUiStore.setState({ favorites: [], filter: { kind: "all" } });
       useConnectionStore.getState().setState(disconnected);
     });
     mockedInvoke.mockImplementation(async (command) => {
@@ -119,28 +115,26 @@ describe("AppShell portrait navigation", () => {
     expect(scrolledZones).toEqual(["center-zone", "right-zone"]);
   });
 
-  it("opens the settings sheet from More and resets the tab when it closes", () => {
+  it("opens the settings page from More and keeps More active", () => {
     render(<AppShell />);
 
     fireEvent.click(screen.getByTestId("bottom-nav-more"));
-    expect(dialogState()).toBe("open");
+    expect(screen.getByRole("tab", { name: "Subscriptions" })).toBeTruthy();
+    expect(screen.queryByTestId("subscriptions-marker")).toBeTruthy();
     expect(screen.getByTestId("bottom-nav-more").getAttribute("aria-current")).toBe("page");
     expect(scrolledZones).toEqual([]);
-
-    fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
-    expect(dialogState()).toBe("closed");
-    expect(screen.getByTestId("bottom-nav-connect").getAttribute("aria-current")).toBe("page");
   });
 
-  it("marks More active when the rail gear opens settings and resets on close", () => {
+  it("marks More active when the rail gear opens settings", () => {
     render(<AppShell />);
 
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
-    expect(dialogState()).toBe("open");
+    expect(screen.getByRole("tab", { name: "Subscriptions" })).toBeTruthy();
     expect(screen.getByTestId("bottom-nav-more").getAttribute("aria-current")).toBe("page");
 
-    fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
-    expect(screen.getByTestId("bottom-nav-connect").getAttribute("aria-current")).toBe("page");
+    fireEvent.click(screen.getByTestId("bottom-nav-servers"));
+    expect(screen.getByTestId("bottom-nav-servers").getAttribute("aria-current")).toBe("page");
+    expect(screen.queryByRole("tab", { name: "Subscriptions" })).toBeNull();
   });
 
   it("uses the shell root as the portrait scroll container and a grid from sm up", () => {

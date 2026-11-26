@@ -3,9 +3,9 @@ import { useEffect, useState } from "react";
 import { ConnectionPanel } from "../features/connection-panel/ConnectionPanel";
 import { invoke } from "../lib/invoke";
 import Servers from "../pages/Servers";
+import Settings from "../pages/Settings";
 import { useAppStore } from "../stores/app.store";
 import { BottomNav } from "./BottomNav";
-import { GearSheet } from "./GearSheet";
 import { ServerRail } from "./ServerRail";
 
 type BottomTab = "connect" | "servers" | "more";
@@ -18,7 +18,7 @@ type BottomTab = "connect" | "servers" | "more";
 export function AppShell() {
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setProfiles = useAppStore((store) => store.setProfiles);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [view, setView] = useState<"servers" | "settings">("servers");
   const [bottomTab, setBottomTab] = useState<BottomTab>("connect");
 
   useEffect(() => {
@@ -51,20 +51,22 @@ export function AppShell() {
     });
   };
   const onConnect = () => {
+    setView("servers");
     setBottomTab("connect");
     scrollToZone("right-zone");
   };
   const onServers = () => {
+    setView("servers");
     setBottomTab("servers");
     scrollToZone("center-zone");
   };
-  const onMore = () => {
+  const onOpenSettings = () => {
+    setView("settings");
     setBottomTab("more");
-    setSheetOpen(true);
   };
-  const onSheetOpenChange = (open: boolean) => {
-    setSheetOpen(open);
-    if (!open) setBottomTab("connect");
+  const onOpenServers = () => {
+    setView("servers");
+    setBottomTab("servers");
   };
 
   return (
@@ -73,14 +75,14 @@ export function AppShell() {
         data-testid="rail-zone"
         className="order-2 min-w-0 border-b border-border sm:col-start-1 sm:row-span-2 sm:row-start-1 sm:min-h-0 sm:w-[72px] sm:overflow-y-auto sm:overscroll-contain sm:border-b-0 sm:border-r lg:order-1 lg:w-auto lg:row-span-1"
       >
-        <ServerRail onOpenSettings={onMore} />
+        <ServerRail onOpenSettings={onOpenSettings} onOpenServers={onOpenServers} />
       </aside>
 
       <main
         data-testid="center-zone"
         className="order-3 min-w-0 p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-2 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain sm:pb-4 lg:order-2 lg:row-start-1 lg:p-6 lg:pb-6"
       >
-        <Servers />
+        {view === "settings" ? <Settings /> : <Servers />}
       </main>
 
       <section
@@ -90,13 +92,11 @@ export function AppShell() {
         <ConnectionPanel />
       </section>
 
-      <GearSheet open={sheetOpen} onOpenChange={onSheetOpenChange} />
-
       <BottomNav
-        active={bottomTab}
+        active={view === "settings" ? "more" : bottomTab}
         onConnect={onConnect}
         onServers={onServers}
-        onMore={onMore}
+        onMore={onOpenSettings}
       />
     </div>
   );
