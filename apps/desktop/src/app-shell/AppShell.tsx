@@ -87,7 +87,7 @@ export function AppShell() {
 
       <section
         data-testid="right-zone"
-        className="order-1 max-h-[46dvh] min-w-0 shrink-0 overflow-y-auto overscroll-contain border-t border-border p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-1 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-t-0 sm:pb-4 lg:order-3 lg:col-start-3 lg:max-h-none"
+        className="order-1 min-w-0 shrink-0 overflow-y-auto overscroll-contain border-t border-border p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-1 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-t-0 sm:pb-4 lg:order-3 lg:col-start-3"
       >
         <ConnectionPanel />
       </section>

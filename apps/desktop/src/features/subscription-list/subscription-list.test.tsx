@@ -146,4 +146,20 @@ describe("SubscriptionList", () => {
 
     await waitFor(() => expect(useAppStore.getState().notice).toContain(expected));
   });
+
+  it("uses container queries so the Add button stays visible in a narrow panel", async () => {
+    render(<SubscriptionList />);
+    await waitFor(() => expect(screen.getByText("Primary feed")).toBeTruthy());
+
+    const grid = screen.getByLabelText("Subscription URL").closest("div")?.parentElement;
+    expect(grid?.className).toContain("@lg:grid-cols-[minmax(0,1fr)_10rem_auto]");
+    expect(grid?.className).not.toContain("sm:grid-cols");
+    expect(grid?.parentElement?.className).toContain("@container");
+    expect(screen.getByRole("button", { name: "Add subscription" }).className).toContain(
+      "shrink-0",
+    );
+
+    const intervalLabel = screen.getByText(/Refetch interval for Primary feed/);
+    expect(intervalLabel.className).toContain("break-words");
+  });
 });

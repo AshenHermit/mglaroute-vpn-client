@@ -113,7 +113,8 @@ export function SettingsForm() {
         <CardTitle>Settings</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="@container">
+          <div className="grid gap-4 @lg:grid-cols-2">
           <Switch
             checked={form.autoRefetchEnabled}
             label="Auto refetch enabled"
@@ -168,6 +169,7 @@ export function SettingsForm() {
             </label>
             <Input
               id="ping-url"
+              className="min-w-0"
               value={form.pingUrl}
               onChange={(event) => setText("pingUrl")(event.target.value)}
             />
@@ -178,13 +180,15 @@ export function SettingsForm() {
             </label>
             <Input
               id="proxy-exclusions"
+              className="min-w-0"
               value={form.proxyExclusions}
               onChange={(event) => setText("proxyExclusions")(event.target.value)}
               placeholder="localhost;127.0.0.1"
             />
           </div>
+          </div>
         </div>
-        <Button className="mt-4" onClick={() => void persist(form)}>
+        <Button className="mt-4 shrink-0" onClick={() => void persist(form)}>
           Save settings
         </Button>
       </CardContent>
@@ -213,6 +217,7 @@ function NumberInput({
       </label>
       <Input
         id={id}
+        className="min-w-0"
         type="number"
         min={min}
         max={max}

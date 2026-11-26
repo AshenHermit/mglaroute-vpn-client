@@ -131,29 +131,41 @@ export function SubscriptionList() {
         <CardTitle>Subscriptions</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_16rem_auto] sm:items-end">
-          <div>
-            <label htmlFor="subscription-url" className="mb-1 block text-xs text-muted-foreground">
-              Subscription URL
-            </label>
-            <Input
-              id="subscription-url"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://example.com/subscription"
-            />
+        <div className="@container mb-4">
+          <div className="grid gap-3 @lg:grid-cols-[minmax(0,1fr)_10rem_auto] @lg:items-end">
+            <div className="min-w-0">
+              <label
+                htmlFor="subscription-url"
+                className="mb-1 block text-xs text-muted-foreground"
+              >
+                Subscription URL
+              </label>
+              <Input
+                id="subscription-url"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://example.com/subscription"
+                className="min-w-0"
+              />
+            </div>
+            <div className="min-w-0">
+              <label
+                htmlFor="subscription-name"
+                className="mb-1 block text-xs text-muted-foreground"
+              >
+                Name (optional)
+              </label>
+              <Input
+                id="subscription-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="min-w-0"
+              />
+            </div>
+            <Button className="shrink-0" onClick={() => void add()}>
+              Add subscription
+            </Button>
           </div>
-          <div>
-            <label htmlFor="subscription-name" className="mb-1 block text-xs text-muted-foreground">
-              Name (optional)
-            </label>
-            <Input
-              id="subscription-name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </div>
-          <Button onClick={() => void add()}>Add subscription</Button>
         </div>
 
         {subscriptions.length === 0 ? (
@@ -181,20 +193,20 @@ export function SubscriptionList() {
                     </Button>
                   </div>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
+                <div className="@container mt-2 flex flex-wrap items-end gap-3">
                   <Switch
                     checked={subscription.enabled}
                     label={`Enabled for ${subscription.name}`}
                     onCheckedChange={(checked) => void setEnabled(subscription, checked)}
                   />
-                  <span className="text-xs text-muted-foreground">
+                  <span className="min-w-0 break-words text-xs text-muted-foreground">
                     Refetch interval for {subscription.name} (minutes)
                   </span>
                   <Input
                     aria-label={`Refetch interval for ${subscription.name} (minutes)`}
                     type="number"
                     min={0}
-                    className="w-20"
+                    className="w-20 shrink-0"
                     value={intervals[subscription.id] ?? String(subscription.autoRefetchMinutes)}
                     onChange={(event) =>
                       setIntervals({ ...intervals, [subscription.id]: event.target.value })

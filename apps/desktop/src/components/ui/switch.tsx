@@ -16,7 +16,7 @@ export function Switch({
   disabled = false,
 }: SwitchProps) {
   return (
-    <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
+    <label className="flex min-h-11 min-w-0 items-center gap-2 text-sm text-foreground">
       <SwitchPrimitive.Root
         checked={checked}
         onCheckedChange={onCheckedChange}
@@ -33,7 +33,7 @@ export function Switch({
           className="block size-4 rounded-full bg-background shadow"
         />
       </SwitchPrimitive.Root>
-      <span>{label}</span>
+      <span className="min-w-0 break-words">{label}</span>
     </label>
   );
 }

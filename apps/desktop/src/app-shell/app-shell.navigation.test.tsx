@@ -159,8 +159,7 @@ describe("AppShell portrait navigation", () => {
     expect(center.className.split(" ")).toContain("overflow-y-auto");
     const right = screen.getByTestId("right-zone");
     expect(right.className.split(" ")).toContain("overflow-y-auto");
-    expect(right.className).toContain("max-h-[46dvh]");
-    expect(right.className).toContain("lg:max-h-none");
+    expect(right.className).not.toContain("max-h-");
     expect(screen.getByTestId("bottom-nav").className).toContain("sm:hidden");
     expect(screen.getByTestId("right-zone").className).toContain(
       "pb-[calc(72px+env(safe-area-inset-bottom))]",
