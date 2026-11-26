@@ -73,6 +73,12 @@ pub fn run() {
             handle.spawn(commands::refetch_loop(state.clone()));
             handle.spawn(commands::auto_test_loop(state.clone()));
             handle.spawn(commands::child_exit_watch(state));
+            #[cfg(desktop)]
+            {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_shell::init())?;
+            }
             lifecycle::setup_tray(app)?;
             Ok(())
         })
