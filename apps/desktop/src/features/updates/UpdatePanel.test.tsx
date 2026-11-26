@@ -141,4 +141,22 @@ describe("UpdatePanel", () => {
     expect(useAppStore.getState().noticeVariant).toBe("error");
     expect(screen.queryByText(/Tauri command/)).toBeNull();
   });
+
+  it("reenables Install after a failed install even with a stale progress event", async () => {
+    act(() => {
+      useAppStore.setState({
+        update: info,
+        updateProgress: { phase: "downloading", received: 1024, total: null },
+      });
+    });
+    mockedInvoke.mockRejectedValueOnce(new CommandInvocationError("update_install", "update"));
+
+    render(<UpdatePanel />);
+    const install = screen.getByRole("button", { name: "Install update" });
+    fireEvent.click(install);
+
+    await waitFor(() => expect(useAppStore.getState().notice).toBe("Update failed"));
+    expect(useAppStore.getState().updateInstalling).toBe(false);
+    expect(install.hasAttribute("disabled")).toBe(false);
+  });
 });

@@ -29,9 +29,10 @@ export function UpdatePanel() {
     );
   }
 
-  // Progress events belong to the backend install lifecycle, so they also
-  // block a second action while in flight.
-  const busy = updateInstalling || updateProgress !== null;
+  // Only the synchronous installing flag gates the button: the store keeps
+  // terminal progress events (including `done`) and never clears them, so a
+  // stale progress line must not strand retry after a failed install.
+  const busy = updateInstalling;
 
   const perform = async (action: () => Promise<unknown>) => {
     // Set synchronously on click: a second click in the same tick sees busy.
