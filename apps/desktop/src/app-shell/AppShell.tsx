@@ -4,6 +4,7 @@ import { ConnectionPanel } from "../features/connection-panel/ConnectionPanel";
 import { invoke } from "../lib/invoke";
 import Servers from "../pages/Servers";
 import { useAppStore } from "../stores/app.store";
+import { GearSheet } from "./GearSheet";
 import { ServerRail } from "./ServerRail";
 
 /**
@@ -62,24 +63,7 @@ export function AppShell() {
         <ConnectionPanel />
       </section>
 
-      {sheetOpen && (
-        <div
-          data-testid="gear-placeholder"
-          className="fixed inset-0 z-50 flex items-start justify-end bg-background/80 p-4"
-        >
-          <div className="h-full w-full max-w-md rounded-lg border border-border bg-card p-4 shadow-lg">
-            <p className="text-sm text-muted-foreground">Settings sheet placeholder.</p>
-            <button
-              type="button"
-              aria-label="Close settings"
-              onClick={() => setSheetOpen(false)}
-              className="mt-4 flex min-h-11 min-w-11 items-center justify-center rounded-md border border-border text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
+      <GearSheet open={sheetOpen} onOpenChange={setSheetOpen} />
 
       {notice && (
         <div

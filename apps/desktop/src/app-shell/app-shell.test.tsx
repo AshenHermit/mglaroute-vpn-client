@@ -9,6 +9,22 @@ vi.mock("../lib/invoke", async (importOriginal) => {
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
 }));
+vi.mock("./GearSheet", () => ({
+  GearSheet: ({
+    open,
+    onOpenChange,
+  }: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+  }) =>
+    open ? (
+      <div data-testid="gear-sheet">
+        <button type="button" aria-label="Close settings" onClick={() => onOpenChange(false)}>
+          ×
+        </button>
+      </div>
+    ) : null,
+}));
 
 import { invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
@@ -208,13 +224,13 @@ describe("AppShell", () => {
     expect(screen.queryByText(/secret\.example/)).toBeNull();
   });
 
-  it("toggles the gear placeholder from the gear button", () => {
+  it("toggles the gear sheet from the gear button", () => {
     render(<AppShell />);
 
-    expect(screen.queryByTestId("gear-placeholder")).toBeNull();
+    expect(screen.queryByTestId("gear-sheet")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
-    expect(screen.getByTestId("gear-placeholder")).toBeTruthy();
+    expect(screen.getByTestId("gear-sheet")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
-    expect(screen.queryByTestId("gear-placeholder")).toBeNull();
+    expect(screen.queryByTestId("gear-sheet")).toBeNull();
   });
 });
