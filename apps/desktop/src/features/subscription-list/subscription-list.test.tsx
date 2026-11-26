@@ -14,7 +14,6 @@ vi.mock("../../lib/invoke", async (importOriginal) => ({
   invoke: vi.fn(),
 }));
 
-import App from "../../App";
 import { invoke } from "../../lib/invoke";
 import { useAppStore } from "../../stores/app.store";
 import { SubscriptionList } from "./SubscriptionList";
@@ -137,20 +136,14 @@ describe("SubscriptionList", () => {
   it.each(refreshErrors)("maps refresh error %j to notice %s", async (error, expected) => {
     mockedInvoke.mockImplementation(async (command) => {
       if (command === "subscription_refresh") throw error;
-      if (command === "profile_list") return [] as never;
-      if (command === "anti_dpi_status") return { status: "unsupported" } as never;
-      if (command === "connection_status") {
-        return { status: "disconnected", profileId: null, proxyPort: null } as never;
-      }
       return [errored] as never;
     });
 
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Subscriptions" }));
+    // Enter the feature directly: the retired nav tab no longer exists. The
+    // notice is owned by the shell toast, so assert the store value here.
+    render(<SubscriptionList />);
     fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain(expected),
-    );
+    await waitFor(() => expect(useAppStore.getState().notice).toContain(expected));
   });
 });
