@@ -1,6 +1,6 @@
 # Release pipeline + in-app updater — design
 
-Status: proposed. Date: 2026-11-26.
+Status: accepted. Date: 2026-11-26.
 
 ## Intent
 
@@ -188,7 +188,9 @@ User approved A and the Rust bump.
   ~/.tauri/mglaroute.key`; commit the public key inline in
   `plugins.updater.pubkey`; set repo secrets
   `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-  Doc records the placeholder until generated; no private key in repo.
+  `plugins.updater.pubkey` still holds `PUBLIC_KEY_PLACEHOLDER`: operator
+  replaces it with the generated public key before the first signed release.
+  No private key in repo.
 - `tauri.conf.json`: `bundle.createUpdaterArtifacts: true`,
   `plugins.updater.windows.installMode: "passive"`,
   `plugins.updater.endpoints` =
@@ -230,3 +232,18 @@ User approved A and the Rust bump.
   first release; private key stays only in GitHub Secrets.
 - Linux CI/AppImage matrix and Android release-page seam are intentionally
   deferred; keep code paths cfg-gated so adding them needs no UI rewrite.
+
+## Delivered notes (2026-11-26)
+
+- Release wiring landed: `@tauri-apps/cli` in desktop devDependencies, root
+  `installer:build`, and `.github/workflows/release.yml` with the inputs above.
+  `scripts/release-config.test.mjs` verifies the wiring as text, no YAML dep.
+- `plugins.updater.pubkey` still holds `PUBLIC_KEY_PLACEHOLDER`; operator must
+  generate the keypair, commit the public key and set the two signing secrets
+  before the first signed release. No private key committed.
+- Windows terminal progress (`done`) is best-effort: the updater may exit before
+  the final event or `app.restart`. The UI clears its busy flag in `finally`, so
+  failed installs remain retryable.
+- Manual pass for update notice, install/cleanup and the release-page fallback:
+  `docs/e2e-checklist.md` steps 16–17. `installer:build` itself is an operator
+  smoke test (network + signing env), not a CI-unit step.

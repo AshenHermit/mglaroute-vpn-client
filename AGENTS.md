@@ -26,6 +26,13 @@ stopped, temp config removed) and then exits the process. Design (status
 `accepted`): `docs/superpowers/specs/2026-11-26-tray-lifecycle-design.md`.
 Plan: `docs/superpowers/plans/2026-11-26-tray-lifecycle.md`.
 
+Release + in-app updater pass implemented: `pnpm installer:build` (fetch/verify
+binaries, then `tauri build --bundles nsis`), tag-triggered
+`.github/workflows/release.yml` publishing signed NSIS setup + `.sig` +
+`latest.json`, startup/6 h update check and an `Updates` tab with Install /
+Open release page actions. Design (status `accepted`):
+`docs/superpowers/specs/2026-11-26-release-updater-design.md`.
+
 ## Stack (fixed by operator)
 
 - pnpm workspace + Nx. Node 20+.
@@ -111,6 +118,10 @@ docs/superpowers/specs/   design docs
   cancellation, connect selection, Job Object assignment and startup reaping.
   Manual smoke on a real binary (orphan check) is operator-only; see
   `docs/e2e-checklist.md`.
+- `pnpm installer:build` needs network + signing env
+  (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`); operator
+  smoke test only, not a CI-unit step. `pnpm vitest run scripts/release-config.test.mjs`
+  checks the release wiring (scripts, CLI dep, workflow inputs, updater config).
 
 ## Contracts
 
@@ -118,6 +129,24 @@ docs/superpowers/specs/   design docs
   alive); tray left-click / `Open` shows and focuses `main`; tray `Exit` runs
   `disconnect_impl` then `app.exit(0)` behind an idempotent shutdown gate.
   No new Tauri commands — WebView state is not on the exit path.
+- Update pipeline: `bundle.createUpdaterArtifacts`, inline
+  `plugins.updater.pubkey` (`PUBLIC_KEY_PLACEHOLDER` until the operator supplies
+  the generated public key), endpoint
+  `https://github.com/AshenHermit/mglaroute-vpn-client/releases/latest/download/latest.json`,
+  Windows `installMode: passive`. Tag `v<version>` must match `tauri.conf.json`.
+  Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`;
+  `GITHUB_TOKEN` from Actions. `tauri-action` uses `uploadUpdaterJson: true`,
+  `updaterJsonPreferNsis: true` so `latest.json` points at NSIS
+  (`windows-x86_64`). Private key stays in GitHub Secrets, never in the repo.
+- Update commands: `update_check` (quiet `None` on failure), `update_install`
+  (shared shutdown cleanup → proxy restore, xray stop, temp config removal,
+  then download/install), `update_open_releases` (Rust `shell::open`, validates
+  GitHub release tag prefix). Progress event `update-progress` (`phase`,
+  `received`, `total`); `update_busy` blocks a double install, `update` covers
+  install/open failures with no raw plugin text. Terminal `done` progress is
+  best-effort on Windows (updater may exit before the final event).
+- Update state (`update`, `updateInstalling`, `updateProgress`) is session-only
+  in Zustand; no SQLite change, no persisted "skip this version".
 - Subscription decode is cascading best-effort, like v2rayN `AddBatchServers`:
   whole-body base64 (standard + URL-safe) → plain lines. MVP URI schemes:
   `vmess://` (legacy base64 JSON), `vless://`, `ss://` (SIP002 + legacy), `trojan://`.
