@@ -12,7 +12,7 @@ export type DialogProps = {
   closeLabel?: string;
 };
 
-/** Local dialog built on the Radix Dialog primitive; no secrets in default UI. */
+/** Animated dialog built on the Animate UI Radix Dialog primitive. */
 export function Dialog({
   open,
   onClose,
@@ -29,13 +29,17 @@ export function Dialog({
       }}
     >
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/80" />
+        <DialogPrimitive.Overlay
+          data-slot="dialog-overlay"
+          className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+        />
         <DialogPrimitive.Content
+          data-slot="dialog-content"
           aria-describedby={undefined}
           className={cn(
             "fixed z-50 shadow-xl focus:outline-hidden",
             contentClassName ??
-              "left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6 text-foreground",
+              "left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-6 text-foreground",
           )}
         >
           <div className="mb-4 flex items-center justify-between gap-4">

@@ -19,6 +19,8 @@ import { invoke } from "../lib/invoke";
  * UI/session state only. Nothing here is persisted: subscriptions, profiles,
  * settings and test results are durable data owned by the Rust commands.
  */
+export type NoticeVariant = "info" | "success" | "error" | "loading";
+
 export type AppStore = {
   subscriptions: Subscription[];
   serviceProfiles: ServiceProfile[];
@@ -31,6 +33,8 @@ export type AppStore = {
   probeCancelled: boolean;
   lastProbeFinishedAt: string | null;
   notice: string | null;
+  noticeVariant: NoticeVariant;
+  noticeSeq: number;
   selectedProfileId: string | null;
   setSubscriptions: (subscriptions: Subscription[]) => void;
   setServiceProfiles: (serviceProfiles: ServiceProfile[]) => void;
@@ -42,7 +46,7 @@ export type AppStore = {
   setProbeSettled: () => void;
   setProbeCancelled: () => void;
   setProbeFinished: (result: ProbeResult) => void;
-  setNotice: (notice: string | null) => void;
+  setNotice: (notice: string | null, variant?: NoticeVariant) => void;
   setSelectedProfileId: (id: string | null) => void;
 };
 
@@ -58,6 +62,8 @@ export const useAppStore = create<AppStore>((set) => ({
   probeCancelled: false,
   lastProbeFinishedAt: null,
   notice: null,
+  noticeVariant: "info",
+  noticeSeq: 0,
   // Session-only: which server the next Connect targets. Never persisted.
   selectedProfileId: null,
   setSubscriptions: (subscriptions) => set({ subscriptions }),
@@ -123,7 +129,12 @@ export const useAppStore = create<AppStore>((set) => ({
       probeCancelled: result.cancelled,
       lastProbeFinishedAt: result.finishedAt,
     }),
-  setNotice: (notice) => set({ notice }),
+  setNotice: (notice, variant = "info") =>
+    set((state) => ({
+      notice,
+      noticeVariant: variant,
+      noticeSeq: state.noticeSeq + 1,
+    })),
   setSelectedProfileId: (selectedProfileId) => set({ selectedProfileId }),
 }));
 

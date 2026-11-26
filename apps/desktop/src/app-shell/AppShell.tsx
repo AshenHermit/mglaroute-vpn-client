@@ -18,8 +18,6 @@ type BottomTab = "connect" | "servers" | "more";
 export function AppShell() {
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setProfiles = useAppStore((store) => store.setProfiles);
-  const notice = useAppStore((store) => store.notice);
-  const setNotice = useAppStore((store) => store.setNotice);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("connect");
 
@@ -100,23 +98,6 @@ export function AppShell() {
         onServers={onServers}
         onMore={onMore}
       />
-
-      {notice && (
-        <div
-          role="status"
-          className="fixed bottom-20 left-1/2 z-[60] flex max-w-sm -translate-x-1/2 items-center gap-3 rounded-md border border-border bg-card px-4 py-3 text-sm text-foreground shadow-lg sm:bottom-4"
-        >
-          <span>{notice}</span>
-          <button
-            type="button"
-            aria-label="Dismiss notice"
-            onClick={() => setNotice(null)}
-            className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            ×
-          </button>
-        </div>
-      )}
     </div>
   );
 }

@@ -8,7 +8,7 @@ export type SwitchProps = {
   disabled?: boolean;
 };
 
-/** Accessible switch built on the Radix Switch primitive. */
+/** Accessible switch built on the animated Animate UI Radix Switch primitive. */
 export function Switch({
   checked,
   onCheckedChange,
@@ -22,16 +22,15 @@ export function Switch({
         onCheckedChange={onCheckedChange}
         disabled={disabled}
         aria-label={label}
+        data-slot="switch"
         className={cn(
-          "relative h-5 w-9 rounded-full transition-colors disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          "relative h-5 w-9 shrink-0 rounded-full disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           checked ? "bg-primary" : "bg-muted",
         )}
       >
         <SwitchPrimitive.Thumb
-          className={cn(
-            "block h-4 w-4 rounded-full bg-background shadow",
-            checked ? "translate-x-[18px]" : "translate-x-0.5",
-          )}
+          data-slot="switch-thumb"
+          className="block size-4 rounded-full bg-background shadow"
         />
       </SwitchPrimitive.Root>
       <span>{label}</span>

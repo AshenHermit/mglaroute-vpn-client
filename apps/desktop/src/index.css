@@ -74,3 +74,9 @@
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+@media (max-width: 639px) {
+  .sonner-toaster {
+    bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+  }
+}

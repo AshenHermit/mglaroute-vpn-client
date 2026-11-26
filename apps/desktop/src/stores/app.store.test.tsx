@@ -355,7 +355,11 @@ describe("app store backend events", () => {
     expect(state.probeTesting).toBe(false);
     expect(state.probeTestingIds).toEqual([]);
     expect(state.probeCancelled).toBe(true);
-    expect(screen.getByRole("status").textContent).toContain("Test cancelled");
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((node) => node.textContent?.includes("Test cancelled")),
+    ).toBe(true);
   });
 
   it("a new backend test run clears a stale probeCancelled", () => {
