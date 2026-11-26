@@ -77,3 +77,31 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running mglaroute client");
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn capabilities_allow_frontend_event_listeners() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities/default.json");
+        let text = std::fs::read_to_string(path)
+            .expect("src-tauri/capabilities/default.json must grant event permissions");
+        let value: serde_json::Value =
+            serde_json::from_str(&text).expect("valid capability JSON");
+        let granted = value
+            .get("permissions")
+            .and_then(|permissions| permissions.as_array())
+            .map(|permissions| {
+                permissions.iter().any(|permission| {
+                    matches!(
+                        permission.as_str(),
+                        Some("core:event:default" | "core:event:allow-listen")
+                    )
+                })
+            })
+            .unwrap_or(false);
+        assert!(
+            granted,
+            "frontend listen() needs core:event:default or core:event:allow-listen; without it probe events are denied"
+        );
+    }
+}
