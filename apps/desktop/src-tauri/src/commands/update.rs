@@ -37,9 +37,15 @@ pub(crate) async fn update_install(
     }
 
     crate::lifecycle::cleanup(&state).await;
-    update::install(&app, |progress| emit(EVENT_UPDATE_PROGRESS, progress))
+    if update::install(&app, |progress| emit(EVENT_UPDATE_PROGRESS, progress))
         .await
-        .map_err(|_| CommandError::Update)?;
+        .is_err()
+    {
+        // No exit on failure: release the gate so tray Exit and a retry work.
+        // The caller must reconnect — cleanup has already restored the proxy.
+        crate::lifecycle::abort_shutdown();
+        return Err(CommandError::Update);
+    }
 
     app.restart()
 }

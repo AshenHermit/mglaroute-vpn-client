@@ -42,6 +42,12 @@ pub(crate) fn begin_shutdown() -> bool {
         .is_ok()
 }
 
+/// Release the gate when a terminal action aborts before exit, so a failed
+/// updater install can be retried and tray `Exit` still works afterwards.
+pub(crate) fn abort_shutdown() {
+    SHUTTING_DOWN.store(false, Ordering::SeqCst);
+}
+
 pub(crate) fn setup_tray<R: Runtime>(app: &mut tauri::App<R>) -> tauri::Result<()> {
     let app_handle = app.handle().clone();
     let open = MenuItem::with_id(&app_handle, "open", "Open", true, None::<&str>)?;
@@ -139,6 +145,22 @@ mod tests {
         SHUTTING_DOWN.store(false, Ordering::SeqCst);
         assert!(begin_shutdown());
         assert!(!begin_shutdown());
+        SHUTTING_DOWN.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn abort_shutdown_restores_gate_after_failed_terminal_action() {
+        SHUTTING_DOWN.store(false, Ordering::SeqCst);
+        assert!(begin_shutdown(), "first install attempt claims the gate");
+        assert!(!begin_shutdown(), "a second attempt is rejected while active");
+
+        abort_shutdown();
+
+        assert!(begin_shutdown(), "failed install must allow a retry");
+        assert!(
+            !begin_shutdown(),
+            "the retried attempt still rejects a third claim"
+        );
         SHUTTING_DOWN.store(false, Ordering::SeqCst);
     }
 
