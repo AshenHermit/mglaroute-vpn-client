@@ -61,4 +61,10 @@ describe("typed invoke", () => {
   it("recognizes the addressable probe_busy code", () => {
     expect(commandErrorCode({ probe_busy: null })).toBe("probe_busy");
   });
+
+  it("recognizes the addressable update error codes", () => {
+    expect(commandErrorCode("update_busy")).toBe("update_busy");
+    expect(commandErrorCode("update")).toBe("update");
+    expect(commandErrorCode({ update_busy: null })).toBe("update_busy");
+  });
 });

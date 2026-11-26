@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Profile, Subscription } from "@mglaroute/contracts";
+import type { Profile, Subscription, UpdateInfo } from "@mglaroute/contracts";
 import { z } from "zod";
 
 vi.mock("../lib/invoke", () => ({ invoke: vi.fn() }));
@@ -79,6 +79,9 @@ describe("app store backend events", () => {
       probeCancelled: false,
       notice: null,
       selectedProfileId: null,
+      update: null,
+      updateInstalling: false,
+      updateProgress: null,
     });
     let subscriptionListCalls = 0;
     mockedInvoke.mockImplementation(async (command) => {
@@ -385,5 +388,61 @@ describe("app store backend events", () => {
 
     expect(useAppStore.getState().probeCancelled).toBe(false);
     expect(useAppStore.getState().probeTesting).toBe(true);
+  });
+
+  it("stores update state through its setters", () => {
+    const info: UpdateInfo = {
+      version: "0.2.0",
+      currentVersion: "0.1.0",
+      notes: null,
+      pubDate: null,
+      canInstallInApp: true,
+      releaseUrl: "https://example.com/releases/v0.2.0",
+    };
+
+    act(() => {
+      useAppStore.getState().setUpdate(info);
+      useAppStore.getState().setUpdateInstalling(true);
+      useAppStore.getState().setUpdateProgress({ phase: "downloading", received: 5, total: 10 });
+    });
+
+    const state = useAppStore.getState();
+    expect(state.update).toEqual(info);
+    expect(state.updateInstalling).toBe(true);
+    expect(state.updateProgress).toEqual({ phase: "downloading", received: 5, total: 10 });
+
+    act(() => {
+      useAppStore.getState().setUpdate(null);
+      useAppStore.getState().setUpdateInstalling(false);
+      useAppStore.getState().setUpdateProgress(null);
+    });
+    const cleared = useAppStore.getState();
+    expect(cleared.update).toBeNull();
+    expect(cleared.updateInstalling).toBe(false);
+    expect(cleared.updateProgress).toBeNull();
+  });
+
+  it("parses and stores update-progress events, ignoring invalid payloads", () => {
+    render(<App />);
+
+    act(() => {
+      eventHandler("update-progress")?.({
+        payload: { phase: "downloading", received: 4, total: 8 },
+      } as never);
+    });
+    expect(useAppStore.getState().updateProgress).toEqual({
+      phase: "downloading",
+      received: 4,
+      total: 8,
+    });
+
+    act(() => {
+      eventHandler("update-progress")?.({ payload: { phase: "unknown" } } as never);
+    });
+    expect(useAppStore.getState().updateProgress).toEqual({
+      phase: "downloading",
+      received: 4,
+      total: 8,
+    });
   });
 });

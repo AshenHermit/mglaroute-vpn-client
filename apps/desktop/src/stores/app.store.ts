@@ -3,12 +3,15 @@ import {
   ProbeResultSchema,
   ProbeServerEventSchema,
   SubscriptionSchema,
+  UpdateProgressEventSchema,
   type ProbeResult,
   type ProbeServerEvent,
   type Profile,
   type ServiceProfile,
   type Settings,
   type Subscription,
+  type UpdateInfo,
+  type UpdateProgressEvent,
 } from "@mglaroute/contracts";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
@@ -36,6 +39,9 @@ export type AppStore = {
   noticeVariant: NoticeVariant;
   noticeSeq: number;
   selectedProfileId: string | null;
+  update: UpdateInfo | null;
+  updateInstalling: boolean;
+  updateProgress: UpdateProgressEvent | null;
   setSubscriptions: (subscriptions: Subscription[]) => void;
   setServiceProfiles: (serviceProfiles: ServiceProfile[]) => void;
   setProfiles: (profiles: Profile[]) => void;
@@ -48,6 +54,9 @@ export type AppStore = {
   setProbeFinished: (result: ProbeResult) => void;
   setNotice: (notice: string | null, variant?: NoticeVariant) => void;
   setSelectedProfileId: (id: string | null) => void;
+  setUpdate: (update: UpdateInfo | null) => void;
+  setUpdateInstalling: (installing: boolean) => void;
+  setUpdateProgress: (progress: UpdateProgressEvent | null) => void;
 };
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -66,6 +75,9 @@ export const useAppStore = create<AppStore>((set) => ({
   noticeSeq: 0,
   // Session-only: which server the next Connect targets. Never persisted.
   selectedProfileId: null,
+  update: null,
+  updateInstalling: false,
+  updateProgress: null,
   setSubscriptions: (subscriptions) => set({ subscriptions }),
   setServiceProfiles: (serviceProfiles) => set({ serviceProfiles }),
   setProfiles: (profiles) => set({ profiles }),
@@ -136,6 +148,9 @@ export const useAppStore = create<AppStore>((set) => ({
       noticeSeq: state.noticeSeq + 1,
     })),
   setSelectedProfileId: (selectedProfileId) => set({ selectedProfileId }),
+  setUpdate: (update) => set({ update }),
+  setUpdateInstalling: (updateInstalling) => set({ updateInstalling }),
+  setUpdateProgress: (updateProgress) => set({ updateProgress }),
 }));
 
 /** Subscribe to backend progress events. Payloads are validated before use. */
@@ -146,6 +161,7 @@ export function useBackendEvents(): void {
   const setProbeFinished = useAppStore((store) => store.setProbeFinished);
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setNotice = useAppStore((store) => store.setNotice);
+  const setUpdateProgress = useAppStore((store) => store.setUpdateProgress);
 
   useEffect(() => {
     let active = true;
@@ -193,6 +209,11 @@ export function useBackendEvents(): void {
       }
     });
 
+    subscribe(EVENTS.updateProgress, (payload) => {
+      const parsed = UpdateProgressEventSchema.safeParse(payload);
+      if (parsed.success) setUpdateProgress(parsed.data);
+    });
+
     subscribe(EVENTS.subscriptionRefreshed, (payload) => {
       const result = payload as {
         added?: unknown;
@@ -231,5 +252,6 @@ export function useBackendEvents(): void {
     setProbeFinished,
     setSubscriptions,
     setNotice,
+    setUpdateProgress,
   ]);
 }
