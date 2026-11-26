@@ -1,8 +1,9 @@
-import { ConnectionStateSchema } from "@mglaroute/contracts";
+import { ConnectionStateSchema, type Profile } from "@mglaroute/contracts";
+import { Power } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { commandErrorCode, invoke } from "../../lib/invoke";
+import { cn } from "../../lib/utils";
 import { useAppStore } from "../../stores/app.store";
 import { useConnectionEvents, useConnectionStore } from "../../stores/connection.store";
 
@@ -13,12 +14,48 @@ const labels = {
   faulted: "Faulted",
 } as const;
 
+/** Client-side elapsed time only; the backend never reports session duration. */
+function formatElapsed(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const rest = (seconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${rest}`;
+}
+
+function Fact({
+  label,
+  value,
+  testId,
+}: {
+  label: string;
+  value: string;
+  testId?: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd data-testid={testId} className="break-words text-right text-foreground">
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function latencyLabel(profile: Profile | null): string {
+  return profile !== null && profile.latencyMs !== null
+    ? `${profile.latencyMs} ms`
+    : "—";
+}
+
 export function ConnectionPanel() {
   const state = useConnectionStore((store) => store.state);
   const setState = useConnectionStore((store) => store.setState);
   const setNotice = useAppStore((store) => store.setNotice);
+  const profiles = useAppStore((store) => store.profiles);
   const selectedProfileId = useAppStore((store) => store.selectedProfileId);
   const [busy, setBusy] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useConnectionEvents();
 
@@ -35,6 +72,16 @@ export function ConnectionPanel() {
       active = false;
     };
   }, [setState]);
+
+  useEffect(() => {
+    setElapsedSeconds(0);
+    if (state.status !== "connected") return;
+    const timer = window.setInterval(
+      () => setElapsedSeconds((seconds) => seconds + 1),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [state.status]);
 
   const connect = async () => {
     setBusy(true);
@@ -82,39 +129,88 @@ export function ConnectionPanel() {
     }
   };
 
+  const connected = state.status === "connected";
+  const connecting = state.status === "connecting";
+  const powerName = connected || connecting
+    ? "Disconnect"
+    : state.status === "faulted"
+      ? "Reconnect"
+      : "Connect";
+  const activeId = state.profileId ?? selectedProfileId;
+  const activeProfile = profiles.find((profile) => profile.id === activeId) ?? null;
+  const activeState = connected ? "connected" : activeProfile ? "active" : "none";
+
   return (
-    <Card>
+    <Card className="flex h-full flex-col gap-4">
       <CardHeader>
         <CardTitle>Connection</CardTitle>
-        <span data-testid="connection-status" className="text-sm font-medium text-slate-600">
+        <span
+          data-testid="connection-status"
+          className="text-sm font-medium text-muted-foreground"
+        >
           {labels[state.status]}
         </span>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            onClick={() => void connect()}
-            disabled={busy || state.status === "connecting" || state.status === "connected"}
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col items-center gap-3">
+            <button
+              type="button"
+              aria-label={powerName}
+              onClick={() => void (connected || connecting ? disconnect() : connect())}
+              disabled={busy || connecting}
+              className={cn(
+                "flex size-28 min-h-11 min-w-11 items-center justify-center rounded-full border border-border bg-muted text-foreground transition-transform hover:scale-[1.03] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+                connected &&
+                  "border-primary/40 bg-primary/10 text-primary ring-2 ring-primary shadow-[0_0_0_8px_oklch(0.72_0.17_150_/_0.12)]",
+              )}
+            >
+              <Power className="size-10" aria-hidden="true" />
+            </button>
+            <span className="text-sm text-muted-foreground">{powerName}</span>
+          </div>
+
+          <div
+            data-testid="active-server"
+            data-state={activeState}
+            className="rounded-lg border border-border bg-background/40 p-4"
           >
-            {state.status === "faulted" ? "Reconnect" : "Connect"}
-          </Button>
-          {(state.status === "connected" || state.status === "connecting") && (
-            <Button variant="secondary" onClick={() => void disconnect()} disabled={busy}>
-              Disconnect
-            </Button>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Active server
+            </p>
+            <p className="mt-1 break-words text-base font-semibold text-foreground">
+              {activeProfile?.remarks ?? activeProfile?.address ?? "No active server"}
+            </p>
+            {activeProfile !== null && (
+              <p className="break-all text-xs text-muted-foreground">
+                {activeProfile.address}
+              </p>
+            )}
+            <dl className="mt-4 grid gap-2 text-sm">
+              <Fact label="Protocol" value={activeProfile?.protocol ?? "—"} />
+              <Fact label="Latency" value={latencyLabel(activeProfile)} />
+              <Fact
+                label="Uptime"
+                value={formatElapsed(elapsedSeconds)}
+                testId="connection-timer"
+              />
+            </dl>
+            {state.proxyPort !== null && (
+              <p className="mt-3 text-sm text-muted-foreground">
+                Proxy port: {state.proxyPort}
+              </p>
+            )}
+          </div>
+
+          {state.status === "faulted" && (
+            <p role="alert" className="text-sm text-destructive">
+              Connection faulted. Reconnect to continue.
+            </p>
           )}
-          {state.proxyPort !== null && (
-            <span className="text-sm text-slate-600">Proxy port: {state.proxyPort}</span>
-          )}
-        </div>
-        {state.status === "faulted" && (
-          <p role="alert" className="mt-3 text-sm text-red-700">
-            Connection faulted. Reconnect to continue.
+          <p className="mt-auto text-xs text-muted-foreground">
+            System proxy only. TUN and anti-DPI are unavailable in this build.
           </p>
-        )}
-        <p className="mt-3 text-xs text-slate-500">
-          System proxy only. TUN and anti-DPI are unavailable in this build.
-        </p>
+        </div>
       </CardContent>
     </Card>
   );

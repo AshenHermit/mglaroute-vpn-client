@@ -1,5 +1,6 @@
 import { ProfileSchema, SubscriptionSchema } from "@mglaroute/contracts";
 import { useEffect, useState } from "react";
+import { ConnectionPanel } from "../features/connection-panel/ConnectionPanel";
 import { invoke } from "../lib/invoke";
 import Servers from "../pages/Servers";
 import { useAppStore } from "../stores/app.store";
@@ -58,7 +59,7 @@ export function AppShell() {
         data-testid="right-zone"
         className="min-h-0 min-w-0 overflow-y-auto overscroll-contain border-t border-border p-4 lg:border-l lg:border-t-0"
       >
-        <div data-testid="right-placeholder" />
+        <ConnectionPanel />
       </section>
 
       {sheetOpen && (

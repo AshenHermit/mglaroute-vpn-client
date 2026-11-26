@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Profile, Subscription } from "@mglaroute/contracts";
 
@@ -12,6 +12,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 import { invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
+import { disconnected, useConnectionStore } from "../stores/connection.store";
 import { useUiStore } from "../stores/ui.store";
 import { AppShell } from "./AppShell";
 
@@ -87,11 +88,13 @@ describe("AppShell", () => {
         selectedProfileId: null,
       });
       useUiStore.setState({ favorites: [], filter: { kind: "all" } });
+      useConnectionStore.getState().setState(disconnected);
     });
     mockedInvoke.mockImplementation(async (command) => {
       if (command === "subscription_list") return subscriptions as never;
       if (command === "profile_list") return profiles as never;
       if (command === "anti_dpi_status") return { status: "unsupported" } as never;
+      if (command === "connection_status") return disconnected as never;
       return undefined as never;
     });
   });
@@ -104,6 +107,18 @@ describe("AppShell", () => {
     expect(screen.getByRole("button", { name: "Favorites" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reachable only" })).toBeTruthy();
     expect(screen.getByText("By subscription")).toBeTruthy();
+  });
+
+  it("mounts the connection panel inside the right zone", () => {
+    render(<AppShell />);
+
+    const rightZone = screen.getByTestId("right-zone");
+    expect(within(rightZone).getByTestId("connection-status").textContent).toBe(
+      "Disconnected",
+    );
+    const active = within(rightZone).getByTestId("active-server");
+    expect(active.getAttribute("data-state")).toBe("none");
+    expect(screen.queryByTestId("right-placeholder")).toBeNull();
   });
 
   it("sets the favorites filter from the rail", () => {
@@ -162,6 +177,7 @@ describe("AppShell", () => {
       }
       if (command === "subscription_list") return subscriptions as never;
       if (command === "profile_list") return profiles as never;
+      if (command === "connection_status") return disconnected as never;
       return undefined as never;
     });
 
