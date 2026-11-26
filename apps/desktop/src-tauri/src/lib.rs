@@ -1,6 +1,7 @@
 pub mod anti_dpi;
 pub mod commands;
 pub mod core;
+pub mod lifecycle;
 pub mod platform;
 pub mod probe;
 pub mod reconnect;
