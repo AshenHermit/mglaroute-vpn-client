@@ -9,6 +9,7 @@ pub mod service_profiles;
 pub mod state;
 pub mod storage;
 pub mod subscription;
+pub mod update;
 
 use tauri::Manager;
 
@@ -49,6 +50,9 @@ command_list!(
     anti_dpi_status,
     anti_dpi_start,
     anti_dpi_stop,
+    update_check,
+    update_install,
+    update_open_releases,
 );
 
 pub fn run() {
