@@ -64,31 +64,35 @@ export function AppShell() {
     setBottomTab("more");
     setSheetOpen(true);
   };
+  const onSheetOpenChange = (open: boolean) => {
+    setSheetOpen(open);
+    if (!open) setBottomTab("connect");
+  };
 
   return (
-    <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-background text-foreground md:grid md:grid-cols-[72px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)_320px]">
+    <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-y-auto bg-background text-foreground sm:grid sm:grid-cols-[72px_minmax(0,1fr)] sm:grid-rows-[auto_minmax(0,1fr)] sm:overflow-hidden lg:grid-cols-[240px_minmax(0,1fr)_320px] lg:grid-rows-1">
       <aside
         data-testid="rail-zone"
-        className="order-2 min-h-0 min-w-0 overflow-y-auto overscroll-contain border-b border-border md:col-start-1 md:row-span-2 md:row-start-1 md:w-[72px] md:border-b-0 md:border-r lg:order-1 lg:w-auto lg:row-span-1"
+        className="order-2 min-w-0 border-b border-border sm:col-start-1 sm:row-span-2 sm:row-start-1 sm:min-h-0 sm:w-[72px] sm:overflow-y-auto sm:overscroll-contain sm:border-b-0 sm:border-r lg:order-1 lg:w-auto lg:row-span-1"
       >
-        <ServerRail onOpenSettings={() => setSheetOpen(true)} />
+        <ServerRail onOpenSettings={onMore} />
       </aside>
 
       <main
         data-testid="center-zone"
-        className="order-3 min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:pb-4 md:col-start-2 md:row-start-2 lg:order-2 lg:row-start-1 lg:p-6 lg:pb-6"
+        className="order-3 min-w-0 p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-2 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain sm:pb-4 lg:order-2 lg:row-start-1 lg:p-6 lg:pb-6"
       >
         <Servers />
       </main>
 
       <section
         data-testid="right-zone"
-        className="order-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain border-t border-border p-4 md:col-start-2 md:row-start-1 md:border-l md:border-t-0 lg:order-3 lg:col-start-3"
+        className="order-1 min-w-0 border-t border-border p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-1 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain sm:border-l sm:border-t-0 sm:pb-4 lg:order-3 lg:col-start-3"
       >
         <ConnectionPanel />
       </section>
 
-      <GearSheet open={sheetOpen} onOpenChange={setSheetOpen} />
+      <GearSheet open={sheetOpen} onOpenChange={onSheetOpenChange} />
 
       <BottomNav
         active={bottomTab}

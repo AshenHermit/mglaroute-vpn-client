@@ -1,5 +1,5 @@
 import { AntiDpiStatusSchema } from "@mglaroute/contracts";
-import { Settings } from "lucide-react";
+import { Globe, Server, Settings, Signal, Star } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { invoke } from "../lib/invoke";
 import { cn } from "../lib/utils";
@@ -8,26 +8,32 @@ import { useUiStore } from "../stores/ui.store";
 
 function RailButton({
   active,
+  label,
+  icon,
   onClick,
-  children,
 }: {
   active: boolean;
+  label: string;
+  icon?: ReactNode;
   onClick: () => void;
-  children: ReactNode;
 }) {
   return (
     <button
       type="button"
+      aria-label={label}
       aria-pressed={active}
+      title={label}
       onClick={onClick}
       className={cn(
-        "flex min-h-11 items-center rounded-md px-3 text-left text-sm text-muted-foreground",
+        "flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md px-3 text-left text-sm text-muted-foreground",
+        "sm:justify-center sm:px-0 lg:justify-start lg:px-3",
         "transition-colors hover:bg-muted hover:text-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active && "bg-muted text-primary",
       )}
     >
-      {children}
+      {icon}
+      <span className="sm:hidden lg:inline">{label}</span>
     </button>
   );
 }
@@ -58,7 +64,9 @@ export function ServerRail({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 bg-card p-4">
       <div className="flex items-center justify-between gap-2">
-        <h1 className="text-base font-semibold tracking-wide text-foreground">mglaroute</h1>
+        <h1 className="sr-only text-base font-semibold tracking-wide text-foreground lg:not-sr-only">
+          mglaroute
+        </h1>
         <button
           type="button"
           aria-label="Open settings"
@@ -73,24 +81,27 @@ export function ServerRail({ onOpenSettings }: { onOpenSettings: () => void }) {
         </button>
       </div>
 
-      <nav aria-label="Server filters" className="flex flex-col gap-1">
-        <RailButton active={filter.kind === "all"} onClick={() => setFilter({ kind: "all" })}>
-          All servers
-        </RailButton>
+      <nav aria-label="Server filters" className="flex flex-row gap-1 overflow-x-auto sm:flex-col">
+        <RailButton
+          active={filter.kind === "all"}
+          label="All servers"
+          icon={<Server aria-hidden="true" className="h-5 w-5 shrink-0" />}
+          onClick={() => setFilter({ kind: "all" })}
+        />
         <RailButton
           active={filter.kind === "favorites"}
+          label="Favorites"
+          icon={<Star aria-hidden="true" className="h-5 w-5 shrink-0" />}
           onClick={() => setFilter({ kind: "favorites" })}
-        >
-          Favorites
-        </RailButton>
+        />
         <RailButton
           active={filter.kind === "reachable"}
+          label="Reachable only"
+          icon={<Signal aria-hidden="true" className="h-5 w-5 shrink-0" />}
           onClick={() => setFilter({ kind: "reachable" })}
-        >
-          Reachable only
-        </RailButton>
+        />
 
-        <h2 className="mt-4 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <h2 className="sr-only mt-4 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground lg:not-sr-only">
           By subscription
         </h2>
         {subscriptions.map((subscription) => (
@@ -99,16 +110,16 @@ export function ServerRail({ onOpenSettings }: { onOpenSettings: () => void }) {
             active={
               filter.kind === "subscription" && filter.subscriptionId === subscription.id
             }
+            label={subscription.name}
+            icon={<Globe aria-hidden="true" className="h-5 w-5 shrink-0" />}
             onClick={() =>
               setFilter({ kind: "subscription", subscriptionId: subscription.id })
             }
-          >
-            {subscription.name}
-          </RailButton>
+          />
         ))}
       </nav>
 
-      <div className="mt-auto flex flex-col gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+      <div className="mt-auto hidden flex-col gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:hidden lg:flex">
         <div className="flex items-center justify-between gap-2">
           <span>Subscriptions</span>
           <span data-testid="subscription-count">{subscriptions.length}</span>
