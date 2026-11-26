@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Profile } from "@mglaroute/contracts";
 import { ServerTable } from "./ServerTable";
 
@@ -30,6 +30,8 @@ function profile(
 }
 
 describe("ServerTable", () => {
+  afterEach(cleanup);
+
   it("sorts by ascending delay and pushes failed servers last, greyed out", () => {
     render(
       <ServerTable
@@ -65,29 +67,40 @@ describe("ServerTable", () => {
     expect(container.querySelectorAll("td.break-words").length).toBeGreaterThan(0);
   });
 
-  it("reports a clicked row and reflects the selected id", () => {
+  it("row body click does not select a server", () => {
     const onSelect = vi.fn();
-    const rows = [profile("p-1", 10, true, 0), profile("p-2", 20, true, 1)];
-    const { rerender } = render(
-      <ServerTable profiles={rows} selectedId={null} onSelect={onSelect} />,
+    render(<ServerTable profiles={[profile("p-1", 10, true, 0)]} onSelect={onSelect} />);
+    fireEvent.click(screen.getByTestId("server-row"));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("power button sets the active server", () => {
+    const onSelect = vi.fn();
+    render(
+      <ServerTable
+        profiles={[profile("p-1", 10, true, 0), profile("p-2", 20, true, 1)]}
+        selectedId="p-1"
+        onSelect={onSelect}
+      />,
     );
-
-    const row = screen
-      .getAllByTestId("server-row")
-      .find((candidate) => candidate.getAttribute("data-profile-id") === "p-2");
-    expect(row).toBeTruthy();
-    expect(row?.getAttribute("role")).toBe("button");
-    expect(row?.getAttribute("data-selected")).toBe("false");
-
-    fireEvent.click(row!);
+    const buttons = screen.getAllByTestId("server-power");
+    const p2 = buttons.find((b) => b.getAttribute("data-profile-id") === "p-2");
+    fireEvent.click(p2!);
     expect(onSelect).toHaveBeenCalledWith("p-2");
+  });
+
+  it("renders three power states", () => {
+    const { rerender } = render(
+      <ServerTable profiles={[profile("p-1", 10, true, 0)]} selectedId={null} />,
+    );
+    expect(screen.getByTestId("server-power").getAttribute("data-state")).toBe("inactive");
+
+    rerender(<ServerTable profiles={[profile("p-1", 10, true, 0)]} selectedId="p-1" />);
+    expect(screen.getByTestId("server-power").getAttribute("data-state")).toBe("active");
 
     rerender(
-      <ServerTable profiles={rows} selectedId="p-2" onSelect={onSelect} />,
+      <ServerTable profiles={[profile("p-1", 10, true, 0)]} selectedId="p-1" connectedId="p-1" />,
     );
-    const selected = screen
-      .getAllByTestId("server-row")
-      .find((candidate) => candidate.getAttribute("data-profile-id") === "p-2");
-    expect(selected?.getAttribute("data-selected")).toBe("true");
+    expect(screen.getByTestId("server-power").getAttribute("data-state")).toBe("connected");
   });
 });

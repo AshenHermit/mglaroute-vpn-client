@@ -105,7 +105,10 @@ fn whitelisted_params(query: &str) -> Value {
             None => (pair, ""),
         };
         if PARAM_WHITELIST.contains(&key) {
-            config.insert(key.to_string(), Value::String(value.to_string()));
+            // Query values are percent-encoded in subscriptions. The server
+            // scanner decodes them; leaving them encoded hands xray invalid
+            // ws paths, ALPN lists and reality short-id settings.
+            config.insert(key.to_string(), Value::String(percent_decode(value)));
         }
     }
     Value::Object(config)
@@ -365,6 +368,18 @@ mod tests {
         assert_eq!(p.port, 8388);
         assert_eq!(p.remarks, "WithSlash");
         assert_eq!(p.link, link);
+    }
+
+    #[test]
+    fn decode_whitelisted_query_values_are_percent_decoded() {
+        // The server scanner decodes query values with URLSearchParams. The
+        // client must do the same or xray gets "%2F" paths and ALPN values.
+        let p = decode_one(
+            "vless://id@example.com:443?security=tls&type=ws&path=%2Fproxyip%3DProxyIP.JP&alpn=http%2F1.1&spx=%2F&sni=cdn.com#Node",
+        );
+        assert_eq!(p.raw_config["path"], "/proxyip=ProxyIP.JP");
+        assert_eq!(p.raw_config["alpn"], "http/1.1");
+        assert_eq!(p.raw_config["spx"], "/");
     }
 
     #[test]

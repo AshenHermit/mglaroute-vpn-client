@@ -3,15 +3,20 @@ import {
   ProfileSchema,
   SubscriptionSchema,
 } from "@mglaroute/contracts";
+import { Power } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ConnectionPanel } from "../features/connection-panel/ConnectionPanel";
 import { invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
+import { useConnectionStore } from "../stores/connection.store";
 
 export default function Dashboard() {
   const subscriptionCount = useAppStore((store) => store.subscriptions.length);
   const serverCount = useAppStore((store) => store.profiles.length);
+  const profiles = useAppStore((store) => store.profiles);
+  const selectedProfileId = useAppStore((store) => store.selectedProfileId);
+  const connection = useConnectionStore((store) => store.state);
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setProfiles = useAppStore((store) => store.setProfiles);
   const tested = useAppStore((store) => store.probeTested);
@@ -56,9 +61,38 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Backend connection state wins when connected; otherwise show the active
+  // target chosen by the row power action (session-only, like the selection).
+  const activeId = connection.profileId ?? selectedProfileId;
+  const active = profiles.find((profile) => profile.id === activeId) ?? null;
+  const activeState = !active ? "none" : connection.status === "connected" ? "connected" : "active";
+
   return (
     <div className="grid gap-4">
       <ConnectionPanel />
+      <Card>
+        <CardHeader>
+          <CardTitle>Current server</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div
+            data-testid="active-server"
+            data-state={activeState}
+            className="flex items-center gap-2"
+          >
+            <Power aria-hidden="true" className="h-4 w-4" />
+            {active ? (
+              <span
+                className={connection.status === "connected" ? "text-emerald-600" : "text-slate-600"}
+              >
+                {active.remarks ?? active.serverId} — {connection.status === "connected" ? "Connected" : "Active"}
+              </span>
+            ) : (
+              <span className="text-slate-500">No active server</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <CardHeader>
