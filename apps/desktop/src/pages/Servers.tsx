@@ -42,15 +42,24 @@ export default function Servers() {
   }, [setProfiles, setNotice]);
 
   const setActive = async (profileId: string) => {
-    setSelectedProfileId(profileId);
-    if (connection.status !== "connected") return;
+    if (connection.status !== "connected") {
+      setSelectedProfileId(profileId);
+      return;
+    }
     try {
       const next = await invoke("connection_connect", ConnectionStateSchema, {
         profileId,
       });
       setConnectionState(next);
-    } catch {
-      setNotice("Connection failed");
+      // Keep the old selection if the backend refused the switch.
+      setSelectedProfileId(profileId);
+    } catch (error) {
+      const code = commandErrorCode(error);
+      setNotice(
+        code === "connection_busy"
+          ? "Connection is busy. Try again in a moment."
+          : "Connection failed",
+      );
     }
   };
 

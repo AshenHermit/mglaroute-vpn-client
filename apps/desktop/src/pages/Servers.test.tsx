@@ -196,4 +196,29 @@ describe("Servers probe controls", () => {
     );
     expect(useAppStore.getState().selectedProfileId).toBe("p-2");
   });
+
+  it("keeps the old active server and reports a busy switch", async () => {
+    useConnectionStore.setState({
+      state: { status: "connected", profileId: "p-1", proxyPort: 10809 },
+    });
+    useAppStore.setState({ selectedProfileId: "p-1" });
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "profile_list") return [server, otherServer] as never;
+      if (command === "connection_connect") {
+        throw new CommandInvocationError("connection_connect", "connection_busy");
+      }
+      return undefined as never;
+    });
+    render(<Servers />);
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(2));
+    const p2 = screen.getAllByTestId("server-power").find(
+      (button) => button.getAttribute("data-profile-id") === "p-2",
+    );
+    fireEvent.click(p2!);
+
+    await waitFor(() =>
+      expect(useAppStore.getState().notice).toContain("busy"),
+    );
+    expect(useAppStore.getState().selectedProfileId).toBe("p-1");
+  });
 });
