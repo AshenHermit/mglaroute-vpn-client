@@ -102,10 +102,15 @@ pub(crate) fn hide_on_close<R: Runtime>(window: &tauri::Window<R>, event: &Windo
     }
 }
 
+/// Shared teardown for terminal actions (tray exit, updater install).
+/// Stop the core, restore the captured proxy, drop the temp config.
+/// The Job Object and proxy_previous.json cover a crash or a failed restore.
+pub(crate) async fn cleanup(state: &AppState) {
+    let _ = crate::commands::connection::disconnect_impl(state).await;
+}
+
 pub(crate) async fn shutdown<R: Runtime>(app: AppHandle<R>, state: AppState) {
-    // Stop the core, restore the captured proxy, drop the temp config.
-    // The Job Object and proxy_previous.json cover a crash or a failed restore.
-    let _ = crate::commands::connection::disconnect_impl(&state).await;
+    cleanup(&state).await;
     app.exit(0);
 }
 
@@ -157,13 +162,25 @@ mod tests {
     fn shutdown_source_cleans_up_before_exit() {
         let body = after("async fn shutdown");
         let cleanup = body
-            .find("disconnect_impl")
-            .expect("shutdown must disconnect before exiting");
+            .find("cleanup(&state)")
+            .expect("shutdown must call shared cleanup before exiting");
         let exit = body.find("app.exit(0)").expect("shutdown must exit");
         assert!(cleanup < exit, "cleanup must finish before process exit");
+    }
+
+    #[test]
+    fn update_cleanup_helper_disconnects_before_terminal_action() {
+        let body = after("pub(crate) async fn cleanup")
+            .split('}')
+            .next()
+            .expect("cleanup body must be delimited");
         assert!(
-            body[..exit].contains("let _ ="),
-            "cleanup failure must not block exit and must not be logged"
+            body.contains("disconnect_impl"),
+            "cleanup must disconnect before a terminal action"
+        );
+        assert!(
+            body.contains("let _ ="),
+            "cleanup failure must not block the terminal action and must not be logged"
         );
     }
 
