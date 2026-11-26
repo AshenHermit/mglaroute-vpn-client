@@ -78,7 +78,7 @@ export function SettingsForm() {
           <CardTitle>Settings</CardTitle>
         </CardHeader>
         <CardContent>
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-destructive">
             Could not load settings. Try again once other operations finish.
           </p>
           <Button className="mt-3" onClick={reload}>
@@ -90,7 +90,7 @@ export function SettingsForm() {
   }
 
   if (!form) {
-    return <p className="text-sm text-slate-500">Loading settings…</p>;
+    return <p className="text-sm text-muted-foreground">Loading settings…</p>;
   }
 
   const toggle = (field: BooleanField) => (checked: boolean) => {
@@ -163,7 +163,7 @@ export function SettingsForm() {
             onChange={setNumber("localProxyPort")}
           />
           <div>
-            <label htmlFor="ping-url" className="mb-1 block text-xs text-slate-600">
+            <label htmlFor="ping-url" className="mb-1 block text-xs text-muted-foreground">
               Ping URL
             </label>
             <Input
@@ -173,7 +173,7 @@ export function SettingsForm() {
             />
           </div>
           <div>
-            <label htmlFor="proxy-exclusions" className="mb-1 block text-xs text-slate-600">
+            <label htmlFor="proxy-exclusions" className="mb-1 block text-xs text-muted-foreground">
               Proxy exclusions
             </label>
             <Input
@@ -208,7 +208,7 @@ function NumberInput({
   const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   return (
     <div>
-      <label htmlFor={id} className="mb-1 block text-xs text-slate-600">
+      <label htmlFor={id} className="mb-1 block text-xs text-muted-foreground">
         {label}
       </label>
       <Input

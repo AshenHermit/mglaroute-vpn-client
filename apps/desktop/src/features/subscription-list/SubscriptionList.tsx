@@ -13,8 +13,8 @@ import { commandErrorCode, invoke } from "../../lib/invoke";
 import { useAppStore } from "../../stores/app.store";
 
 const badgeStyles: Record<Subscription["status"], string> = {
-  active: "bg-emerald-100 text-emerald-700",
-  inactive: "bg-slate-100 text-slate-600",
+  active: "bg-primary/15 text-primary",
+  inactive: "bg-muted text-muted-foreground",
   error: "bg-red-100 text-red-700",
 };
 
@@ -133,7 +133,7 @@ export function SubscriptionList() {
       <CardContent>
         <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_16rem_auto] sm:items-end">
           <div>
-            <label htmlFor="subscription-url" className="mb-1 block text-xs text-slate-600">
+            <label htmlFor="subscription-url" className="mb-1 block text-xs text-muted-foreground">
               Subscription URL
             </label>
             <Input
@@ -144,7 +144,7 @@ export function SubscriptionList() {
             />
           </div>
           <div>
-            <label htmlFor="subscription-name" className="mb-1 block text-xs text-slate-600">
+            <label htmlFor="subscription-name" className="mb-1 block text-xs text-muted-foreground">
               Name (optional)
             </label>
             <Input
@@ -157,9 +157,9 @@ export function SubscriptionList() {
         </div>
 
         {subscriptions.length === 0 ? (
-          <p className="text-sm text-slate-500">No subscriptions yet.</p>
+          <p className="text-sm text-muted-foreground">No subscriptions yet.</p>
         ) : (
-          <ul className="divide-y divide-slate-200">
+          <ul className="divide-y divide-border">
             {subscriptions.map((subscription) => (
               <li key={subscription.id} className="py-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -187,7 +187,7 @@ export function SubscriptionList() {
                     label={`Enabled for ${subscription.name}`}
                     onCheckedChange={(checked) => void setEnabled(subscription, checked)}
                   />
-                  <span className="text-xs text-slate-600">
+                  <span className="text-xs text-muted-foreground">
                     Refetch interval for {subscription.name} (minutes)
                   </span>
                   <Input
