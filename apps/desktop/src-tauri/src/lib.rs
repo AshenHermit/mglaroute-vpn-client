@@ -1,6 +1,7 @@
 pub mod anti_dpi;
 pub mod commands;
 pub mod core;
+pub mod lifecycle;
 pub mod platform;
 pub mod probe;
 pub mod reconnect;
@@ -58,6 +59,7 @@ pub fn run() {
     let handle = runtime.handle().clone();
 
     tauri::Builder::default()
+        .on_window_event(lifecycle::hide_on_close)
         .setup(move |app| {
             let dir = app
                 .path()
@@ -71,6 +73,7 @@ pub fn run() {
             handle.spawn(commands::refetch_loop(state.clone()));
             handle.spawn(commands::auto_test_loop(state.clone()));
             handle.spawn(commands::child_exit_watch(state));
+            lifecycle::setup_tray(app)?;
             Ok(())
         })
         .invoke_handler(invoke_handler())

@@ -143,6 +143,20 @@ Windows registry run; **network** = needs live subscription/test URLs. All steps
     "Could not refresh subscription". On connect, `connection_busy` → "Connection
     operation in progress" instead of a generic failure.
 
+15. **Tray lifecycle → window hides, reopens, and Exit cleans up once.** (binary, Windows)
+    From a `Connected` state (step 4) click the window's close button, then
+    left-click the tray icon, then right-click it and choose **Exit**.
+    Expected: the close button hides the window but the process stays alive —
+    the tray icon is still present, the connection card state is unchanged, the
+    registry proxy is still set, and the working xray core is still running.
+    Left-click restores and focuses the `main` window (same connection state).
+    Right-click shows a menu with `Open` and `Exit` only. Choosing `Exit`
+    restores the recorded proxy values, removes `proxy_previous.json`, and
+    leaves no `xray.exe` process or `%TEMP%\mglaroute-probe-*` sidecars; the
+    process then ends. Repeat the connect → close → Exit sequence, and try a
+    rapid double-click on `Exit`: no second cleanup runs (no error dialog, no
+    duplicate proxy restore, no process left behind).
+
 ## Not covered by this checklist
 
 TUN, functional anti-DPI, Clash YAML / sing-box / v2ray JSON full-config import,
