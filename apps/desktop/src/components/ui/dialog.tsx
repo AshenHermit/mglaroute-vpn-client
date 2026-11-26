@@ -39,7 +39,7 @@ export function Dialog({
           className={cn(
             "fixed z-50 shadow-xl focus:outline-hidden",
             contentClassName ??
-              "left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-6 text-foreground",
+              "inset-0 m-auto h-fit w-[calc(100%-2rem)] max-w-lg rounded-xl border border-border bg-card p-6 text-foreground",
           )}
         >
           <div className="mb-4 flex items-center justify-between gap-4">

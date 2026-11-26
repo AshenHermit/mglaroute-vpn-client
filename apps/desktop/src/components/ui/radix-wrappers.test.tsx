@@ -1,9 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Dialog } from "./dialog";
 import { Switch } from "./switch";
 
 describe("ui primitives", () => {
+  afterEach(cleanup);
+
   it("radix_switch_and_dialog_wrappers", () => {
     const onCheckedChange = vi.fn();
     render(
@@ -31,5 +33,19 @@ describe("ui primitives", () => {
     expect(screen.getByText("Edit profile")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("centers the animated dialog without fighting Motion transforms", () => {
+    render(
+      <Dialog open onClose={vi.fn()} title="Centered">
+        <p>body</p>
+      </Dialog>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).not.toMatch(/-translate-[xy]-1\/2/);
+    expect(dialog.className).toContain("inset-0");
+    expect(dialog.className).toContain("m-auto");
+    expect(dialog.className).toContain("h-fit");
   });
 });
