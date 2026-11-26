@@ -19,6 +19,13 @@ xray cores (Windows Job Object + startup sidecar reaping). Design (status
 `accepted`): `docs/superpowers/specs/2026-11-25-v2rayn-parity-connect-probe-design.md`.
 Plan: `docs/superpowers/plans/2026-11-25-v2rayn-parity-connect-probe.md`.
 
+Tray lifecycle pass implemented: closing the window hides it while the process
+stays resident; left-click tray icon restores/focuses the window; right-click
+menu has `Open` and `Exit`, where `Exit` disconnects first (proxy restored, xray
+stopped, temp config removed) and then exits the process. Design (status
+`accepted`): `docs/superpowers/specs/2026-11-26-tray-lifecycle-design.md`.
+Plan: `docs/superpowers/plans/2026-11-26-tray-lifecycle.md`.
+
 ## Stack (fixed by operator)
 
 - pnpm workspace + Nx. Node 20+.
@@ -92,7 +99,9 @@ docs/superpowers/specs/   design docs
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: plain command
   needs a bundled binary (tauri-build validates `externalBin`). Tests use a fake
   launcher; test-only `$env:TAURI_CONFIG='{"bundle":{"externalBin":[],"resources":[]}}'`
-  skips the sidecar check without a real binary.
+  skips the sidecar check without a real binary. Append `-- --test-threads=1`:
+  the process-global `EVENT_SINK` in `state.rs` makes a parallel run flaky
+  (`connect_port_in_use_returns_distinct_error_without_faulted_event`).
 - `pnpm binaries:fetch` / `pnpm binaries:verify`: fetch/verify staged xray with
   `.dgst` sha256. `XRAY_BINARY_PATH` overrides the binary for dev. No real binary
   in this checkout — `binaries:verify` fails with `ENOENT ... xray.exe.sha256`;
@@ -105,6 +114,10 @@ docs/superpowers/specs/   design docs
 
 ## Contracts
 
+- Desktop tray lifecycle: `CloseRequested` hides the window (process stays
+  alive); tray left-click / `Open` shows and focuses `main`; tray `Exit` runs
+  `disconnect_impl` then `app.exit(0)` behind an idempotent shutdown gate.
+  No new Tauri commands — WebView state is not on the exit path.
 - Subscription decode is cascading best-effort, like v2rayN `AddBatchServers`:
   whole-body base64 (standard + URL-safe) → plain lines. MVP URI schemes:
   `vmess://` (legacy base64 JSON), `vless://`, `ss://` (SIP002 + legacy), `trojan://`.

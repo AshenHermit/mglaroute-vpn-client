@@ -1,6 +1,6 @@
 # System tray + safe exit — design
 
-Status: proposed (small change). Date: 2026-11-26.
+Status: accepted (small change). Date: 2026-11-26.
 
 ## Intent
 
