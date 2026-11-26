@@ -4,8 +4,20 @@ Cross-platform VPN client for the mglaroute ecosystem. Companion to `../mglarout
 
 ## Status
 
-Planned. No source code yet. Design: `docs/superpowers/specs/2026-11-24-mglaroute-vpn-client-design.md`.
-Task-by-task plan to be written after spec approval.
+Windows desktop MVP implemented. Subscription import by URL, service profiles,
+real delay + service probing, auto-sort, auto-reconnect with cooldown, system
+proxy connect/disconnect with crash + startup restore. Linux, Android and iOS
+deferred. Design: `docs/superpowers/specs/2026-11-24-mglaroute-vpn-client-design.md`.
+Plan: `docs/superpowers/plans/2026-11-24-mglaroute-vpn-client-mvp.md`.
+Manual pass: `docs/e2e-checklist.md`.
+
+v2rayN-parity connect + probe pass implemented on top of the MVP: first-click
+connect from a fresh import (explicit row selection, cache-free fallback),
+independent connection/probe/mutation domains with distinct busy codes, parallel
+mixed probe capped by `test_concurrency`, live per-server events, and no orphaned
+xray cores (Windows Job Object + startup sidecar reaping). Design (status
+`accepted`): `docs/superpowers/specs/2026-11-25-v2rayn-parity-connect-probe-design.md`.
+Plan: `docs/superpowers/plans/2026-11-25-v2rayn-parity-connect-probe.md`.
 
 ## Stack (fixed by operator)
 
@@ -17,7 +29,7 @@ Task-by-task plan to be written after spec approval.
 - Target: desktop Windows now; Linux desktop later. Android later; iOS after Android.
   All OS-specific behaviour behind Rust traits so mobile can reuse core logic.
 
-## Layout (planned)
+## Layout
 
 ```
 apps/desktop/
@@ -41,25 +53,55 @@ docs/superpowers/specs/   design docs
 1. Desktop app (Windows) with import of subscriptions by URL.
 2. Online-service profiles: named list of test URLs, add/edit/delete/enable/disable.
    Mirrors server entity: `name` (unique), `testUrls[]`, `isEnabled`, `isDefault`.
-3. Per-subscription activation/deactivation + periodic auto-refetch.
+3. Per-subscription activation/deactivation + periodic auto-refetch. Subscription
+   rows expose enable switch + per-row refetch interval (minutes) via
+   `subscription_update`; fresh rows default to 15. Global settings
+   `refetchIntervalMinutes` remains in storage/contract but is not shown in UI.
 4. Periodic auto-test: real delay per server + reachability of all URLs of each active
    service profile through the same proxy; auto-sort by delay (failed last).
+   Tests are a parallel mixed probe (one temporary core per server, up to
+   `test_concurrency` at once) and run independently of a live connection.
 5. Auto-reconnect: after each test cycle switch to best server if current is not best,
    with cooldown. Only servers passing all active service profiles are eligible.
 6. connect/disconnect using system proxy on Windows (WinInet + registry, no admin).
    Restore previous proxy state on disconnect. TUN is a later feature.
 
-## Not in MVP
+## Not in MVP (current limitations)
 
-- Anti-DPI service. Deferred. Engine binaries and licence notices still ship in builds;
-  reserve `AntiDpiService` trait + disabled command stubs. Windows: winws2.exe +
-  WinDivert driver (admin/UAC). Linux: nfqws2 built locally + nftables NFQUEUE (root).
-  zapret2/Igareck catalogue has no domain-list input; only strategy preset, adapter,
-  TCP port scope. GPL-3.0 wrapper; WinDivert LGPL/GPL — preserve all notices.
-- TUN mode, iOS, Android UI.
-- Clash YAML / sing-box / v2ray JSON full-config import (v2rayN hands these to other cores).
-- `subscription-userinfo` traffic/expiry parsing (v2rayN has none).
-- Credential login to the server panel; client imports public subscription URLs only.
+- No TUN mode — per-user WinInet registry proxy only, no admin or driver.
+- No functional anti-DPI. Engine binaries, licence notices and disabled stubs
+  ship in builds; every `anti_dpi_*` command reports `unsupported`. Windows:
+  winws2.exe + WinDivert driver (admin/UAC). Linux: nfqws2 built locally +
+  nftables NFQUEUE (root). zapret2/Igareck catalogue has no domain-list input;
+  only strategy preset, adapter, TCP port scope. GPL-3.0 wrapper; WinDivert
+  LGPL/GPL — preserve all notices.
+- No Clash YAML / sing-box / v2ray JSON full-config import (v2rayN hands these
+  to other cores).
+- No `format=json` feed import — subscription text only.
+- RAS-entry proxy iteration skipped — no `RasEnumEntriesW`, no dial-up proxy
+  restore.
+- Linux desktop, Android and iOS deferred — Windows desktop only.
+- No `subscription-userinfo` traffic/expiry parsing (v2rayN has none).
+- No credential login to the server panel; client imports public subscription URLs only.
+
+## Verification
+
+- `pnpm test` runs Nx projects plus `vitest run scripts` (sha256/asset suites);
+  exit code is meaningful. `pnpm build`: set `NX_DAEMON='false'` (Nx daemon flake).
+  `Cannot switch to pnpm@9` and zod annotation warnings are pre-existing.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: plain command
+  needs a bundled binary (tauri-build validates `externalBin`). Tests use a fake
+  launcher; test-only `$env:TAURI_CONFIG='{"bundle":{"externalBin":[],"resources":[]}}'`
+  skips the sidecar check without a real binary.
+- `pnpm binaries:fetch` / `pnpm binaries:verify`: fetch/verify staged xray with
+  `.dgst` sha256. `XRAY_BINARY_PATH` overrides the binary for dev. No real binary
+  in this checkout — `binaries:verify` fails with `ENOENT ... xray.exe.sha256`;
+  deferred to a real build machine with network access.
+- Both suites pass. Tests cover guard independence (`probe_busy` never blocks
+  `ConnectionGuard` and vice versa), concurrency cap, per-server event order,
+  cancellation, connect selection, Job Object assignment and startup reaping.
+  Manual smoke on a real binary (orphan check) is operator-only; see
+  `docs/e2e-checklist.md`.
 
 ## Contracts
 
@@ -70,7 +112,35 @@ docs/superpowers/specs/   design docs
 - Real delay matches v2rayN: temporary xray core, `mixed` inbound on free loopback port,
   2 HTTP GETs to ping URL (default `https://www.google.com/generate_204`) through explicit
   loopback proxy, min positive ms. Service URL check = 2xx on **all** URLs of a profile,
-  through same proxy session; no OS-proxy fallback.
+  through same proxy session; no OS-proxy fallback. Probe is a **parallel mixed** run:
+  one temporary core per server via `buffer_unordered(test_concurrency)`, independent
+  of the live connection (running a test never touches system proxy or the working core).
+- `test_concurrency` (settings/contract) defaults to `10` (v2rayN
+  `MixedConcurrencyCount`), clamped `1..=20`; stored in `settings.test_concurrency`
+  behind `PRAGMA user_version = 2` (v1 → v2 `ALTER TABLE` migration).
+- Per-server probe events drive live row state: `probe-server`
+  (`status: testing | done | failed | cancelled`, `latencyMs`, `serviceResults`)
+  fires before spawn and after each result; `probe-progress` after each server;
+  `probe-cancelled` on accepted Stop; `probe-finished` (`cancelled: bool`) at the
+  end. A row is highlighted only for the exact `profileId` in a `testing` event;
+  its terminal event removes the highlight and immediately patches `latencyMs`
+  and `reachable` in the table. `cancelled` removes the highlight but keeps the
+  previous result. Payload shapes live in `packages/contracts/src/schemas.ts`.
+- Manual Run test sets only optimistic `probeTesting` on click (spinner, Stop
+  test) and clears it in `finally`; it starts with `probeTestingIds: []` and
+  never reads `test_concurrency`. A fast `probe_busy` or cycle error emits no
+  per-server event, so this keeps visible feedback without lying about which
+  cores actually run. The final `profile_list` re-fetch stays authoritative for
+  persisted rows; `checkedAt` is not synthesized client-side. `probe-finished`
+  keeps `cancelled`/`finishedAt` authoritative.
+- Three independent guards emit distinct busy codes: `connection_busy`
+  (connect/disconnect/apply_reconnect), `probe_busy` (probe_run/auto-test),
+  `mutation_busy` (subscriptions/settings/refetch). `probe_busy` never blocks
+  Connect. Stop test keeps partial samples but skips the global re-sort.
+- No orphaned xray cores: every core joins a Windows Job Object
+  (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) with a PID sidecar next to its temp config;
+  startup reaping kills only PIDs verified as xray with a matching config path.
+  `%TEMP%\mglaroute-probe-*` config/sidecar files are removed on stop/exit.
 - Server feed is a valid import source: `GET /api/feed?format=subscription` (raw text,
   4 URI schemes). Feed is public, no JWT. `format=json` (scan metadata) consumption
   deferred — MVP imports subscription text only.
@@ -79,7 +149,8 @@ docs/superpowers/specs/   design docs
   Tauri `externalBin` bundles them. `XRAY_BINARY_PATH` override for dev.
 - SQLite tables: `subscriptions`, `profiles`, `service_profiles`,
   `profile_service_results`, `settings`. Test results never stored inside profile row.
-- Never put subscription URLs, credentials or raw config into logs.
+- Never put subscription URLs, credentials or raw config into logs — or into
+  probe PID sidecars/events (sidecars hold only a verified PID and config path).
 
 ## Conventions
 

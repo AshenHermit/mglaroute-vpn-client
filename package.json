@@ -1,0 +1,22 @@
+{
+  "name": "mglaroute-vpn-client",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "nx run-many --target=dev --parallel",
+    "build": "nx run-many --target=build",
+    "test": "nx run-many --target=test && vitest run scripts",
+    "binaries:fetch": "node scripts/fetch-xray.mjs && node scripts/stage-antiddpi.mjs",
+    "binaries:verify": "node scripts/fetch-xray.mjs --verify"
+  },
+  "devDependencies": {
+    "adm-zip": "^0.5.18",
+    "nx": "^21.6.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.9"
+  }
+}
