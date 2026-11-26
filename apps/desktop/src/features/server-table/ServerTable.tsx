@@ -57,15 +57,27 @@ export function ServerTable({
 
   return (
     <div className="w-full min-w-0 overflow-x-auto">
-      <Table className="table-fixed">
+      <Table className="table-fixed min-w-[560px]">
+        <colgroup>
+          <col className="w-10" />
+          <col className="w-[40%]" />
+          <col className="w-[90px]" />
+          <col className="w-[120px]" />
+          <col className="w-[70px]" />
+          <col className="w-[80px]" />
+        </colgroup>
         <TableHead>
           <TableRow>
-            <TableHeaderCell className="w-10" />
-            <TableHeaderCell className="w-2/5">Server</TableHeaderCell>
-            <TableHeaderCell className="hidden sm:table-cell">Protocol</TableHeaderCell>
-            <TableHeaderCell className="hidden sm:table-cell">Address</TableHeaderCell>
-            <TableHeaderCell>Delay</TableHeaderCell>
-            <TableHeaderCell>State</TableHeaderCell>
+            <TableHeaderCell className="whitespace-nowrap" />
+            <TableHeaderCell className="whitespace-nowrap">Server</TableHeaderCell>
+            <TableHeaderCell className="hidden whitespace-nowrap sm:table-cell">
+              Protocol
+            </TableHeaderCell>
+            <TableHeaderCell className="hidden whitespace-nowrap sm:table-cell">
+              Address
+            </TableHeaderCell>
+            <TableHeaderCell className="whitespace-nowrap">Delay</TableHeaderCell>
+            <TableHeaderCell className="whitespace-nowrap">State</TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -120,9 +132,11 @@ export function ServerTable({
                       <Power aria-hidden="true" className="h-4 w-4" />
                     </button>
                   </TableCell>
-                  <TableCell className="break-words">
+                  <TableCell className="truncate" title={name}>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 break-words">{name}</span>
+                      <span className="min-w-0 truncate" title={name}>
+                        {name}
+                      </span>
                       <span className="flex shrink-0 items-center gap-1">
                         <button
                           type="button"
@@ -150,10 +164,16 @@ export function ServerTable({
                       </span>
                     </div>
                   </TableCell>
-                  <TableCell className="hidden sm:table-cell break-words">
+                  <TableCell
+                    className="hidden truncate sm:table-cell"
+                    title={profile.protocol ?? undefined}
+                  >
                     {profile.protocol ?? "—"}
                   </TableCell>
-                  <TableCell className="hidden sm:table-cell break-words">
+                  <TableCell
+                    className="hidden truncate sm:table-cell"
+                    title={profile.address ?? undefined}
+                  >
                     {profile.address ?? "—"}
                   </TableCell>
                   <TableCell>

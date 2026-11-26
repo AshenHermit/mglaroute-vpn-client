@@ -287,7 +287,7 @@ describe("Servers probe controls", () => {
     render(<Servers />);
 
     expect(screen.getByText("3 / 5")).toBeTruthy();
-    expect(screen.getByText("Finished: 2026-11-26T10:00:00Z")).toBeTruthy();
+    expect(screen.getByText("Finished: 26.11.2026 13:00:00")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Stop test" })).toBeTruthy();
   });
 });

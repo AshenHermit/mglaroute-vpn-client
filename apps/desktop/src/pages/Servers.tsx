@@ -12,6 +12,7 @@ import { Input } from "../components/ui/input";
 import { filterProfiles } from "../features/server-list/server-filter";
 import { ServerDetailsDialog } from "../features/server-list/ServerDetailsDialog";
 import { ServerTable } from "../features/server-table/ServerTable";
+import { formatTimestamp } from "../lib/datetime";
 import { commandErrorCode, invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
 import { useConnectionStore } from "../stores/connection.store";
@@ -154,12 +155,17 @@ export default function Servers() {
             placeholder="Search servers"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="min-w-48 flex-1"
+            className="min-w-0 max-w-xs flex-1"
           />
           <span className="text-xs text-muted-foreground">{visibleProfiles.length} shown</span>
         </div>
         {lastProbeFinishedAt && (
-          <p className="text-xs text-muted-foreground">Finished: {lastProbeFinishedAt}</p>
+          <p
+            className="truncate text-xs text-muted-foreground"
+            title={lastProbeFinishedAt}
+          >
+            Finished: {formatTimestamp(lastProbeFinishedAt)}
+          </p>
         )}
       </CardHeader>
       <CardContent>

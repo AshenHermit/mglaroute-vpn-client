@@ -57,14 +57,22 @@ describe("ServerTable", () => {
     expect(rows[3].className).toContain("opacity-60");
   });
 
-  it("keeps long server names inside a scrollable table area", () => {
-    const { container } = render(
-      <ServerTable profiles={[profile("p-1", 10, true, 0)]} />,
-    );
+  it("keeps long server names single-line with a title inside a scrollable table area", () => {
+    const name = "us United States | TG:@HardVpn_robot_bot_t.me/jsxrd";
+    const item = { ...profile("p-1", 10, true, 0), remarks: name };
+    const { container } = render(<ServerTable profiles={[item]} />);
 
     expect(container.querySelector("div.overflow-x-auto")).toBeTruthy();
     expect(container.querySelector("table")?.className).toContain("table-fixed");
-    expect(container.querySelectorAll("td.break-words").length).toBeGreaterThan(0);
+
+    const cell = screen.getByText(name).closest("td")!;
+    expect(cell.className).toContain("truncate");
+    expect(cell.getAttribute("title")).toBe(name);
+
+    const headerRow = screen.getByText("Server").closest("tr")!;
+    for (const heading of headerRow.querySelectorAll("th")) {
+      expect(heading.className).toContain("whitespace-nowrap");
+    }
   });
 
   it("row body click does not select a server", () => {
@@ -150,10 +158,14 @@ describe("ServerTable", () => {
     const { container } = render(<ServerTable profiles={[profile("p-1", 10, true, 0)]} />);
 
     expect(container.querySelectorAll("table")).toHaveLength(1);
+    const hiddenBelowSm = (className: string) => {
+      const tokens = className.split(" ");
+      return tokens.includes("hidden") && tokens.includes("sm:table-cell");
+    };
     for (const heading of ["Protocol", "Address"]) {
-      expect(screen.getByText(heading).className).toContain("hidden sm:table-cell");
+      expect(hiddenBelowSm(screen.getByText(heading).className)).toBe(true);
     }
-    expect(screen.getByText("vless").className).toContain("hidden sm:table-cell");
-    expect(screen.getByText("node.example.com").className).toContain("hidden sm:table-cell");
+    expect(hiddenBelowSm(screen.getByText("vless").className)).toBe(true);
+    expect(hiddenBelowSm(screen.getByText("node.example.com").className)).toBe(true);
   });
 });
