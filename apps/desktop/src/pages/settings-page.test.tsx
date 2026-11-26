@@ -31,7 +31,7 @@ import { AppShell } from "../app-shell/AppShell";
 const mockedInvoke = vi.mocked(invoke);
 
 const settingsTabsVisible = () =>
-  ["Subscriptions", "Service profiles", "Settings"].every((name) =>
+  ["Subscriptions", "Service profiles", "Settings", "Updates"].every((name) =>
     Boolean(screen.queryByRole("tab", { name })),
   );
 
