@@ -141,7 +141,7 @@ export function ConnectionPanel() {
   const activeState = connected ? "connected" : activeProfile ? "active" : "none";
 
   return (
-    <Card className="flex h-full flex-col gap-4">
+    <Card className="flex h-auto flex-col gap-4 lg:h-full">
       <CardHeader>
         <CardTitle>Connection</CardTitle>
         <span

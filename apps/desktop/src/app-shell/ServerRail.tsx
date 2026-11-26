@@ -25,7 +25,7 @@ function RailButton({
       title={label}
       onClick={onClick}
       className={cn(
-        "flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md px-3 text-left text-sm text-muted-foreground",
+        "flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-left text-sm text-muted-foreground",
         "sm:justify-center sm:px-0 lg:justify-start lg:px-3",
         "transition-colors hover:bg-muted hover:text-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -33,7 +33,7 @@ function RailButton({
       )}
     >
       {icon}
-      <span className="sm:hidden lg:inline">{label}</span>
+      <span className="hidden lg:inline">{label}</span>
     </button>
   );
 }

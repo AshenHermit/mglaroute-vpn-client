@@ -152,9 +152,16 @@ describe("AppShell portrait navigation", () => {
       expect(classes).toContain("sm:min-h-0");
       expect(classes).toContain("sm:overflow-y-auto");
       expect(classes).toContain("sm:overscroll-contain");
-      expect(classes).not.toContain("min-h-0");
-      expect(classes).not.toContain("overflow-y-auto");
     }
+    const center = screen.getByTestId("center-zone");
+    expect(center.className.split(" ")).toContain("min-h-0");
+    expect(center.className).toContain("min-w-0");
+    expect(center.className.split(" ")).toContain("overflow-y-auto");
+    const right = screen.getByTestId("right-zone");
+    expect(right.className.split(" ")).toContain("overflow-y-auto");
+    expect(right.className).toContain("max-h-[46dvh]");
+    expect(right.className).toContain("lg:max-h-none");
+    expect(screen.getByTestId("bottom-nav").className).toContain("sm:hidden");
     expect(screen.getByTestId("right-zone").className).toContain(
       "pb-[calc(72px+env(safe-area-inset-bottom))]",
     );
@@ -168,8 +175,8 @@ describe("AppShell portrait navigation", () => {
       expect(button.getAttribute("title")).toBe(name);
       const label = button.querySelector("span");
       expect(label?.textContent).toBe(name);
-      expect(label?.className).toContain("sm:hidden");
-      expect(label?.className).toContain("lg:inline");
+      expect(label?.className.split(" ")).toContain("hidden");
+      expect(label?.className.split(" ")).toContain("lg:inline");
       expect(button.querySelector("svg")).toBeTruthy();
     }
   });
