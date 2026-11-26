@@ -75,12 +75,15 @@ export function AppShell() {
         data-testid="rail-zone"
         className="order-2 min-w-0 shrink-0 border-b border-border sm:col-start-1 sm:row-span-2 sm:row-start-1 sm:min-h-0 sm:w-[72px] sm:overflow-y-auto sm:overscroll-contain sm:border-b-0 sm:border-r lg:order-1 lg:w-auto lg:row-span-1"
       >
-        <ServerRail onOpenSettings={onOpenSettings} onOpenServers={onOpenServers} />
+        <ServerRail
+          onOpenSettings={onOpenSettings}
+          onOpenServers={onOpenServers}
+        />
       </aside>
 
       <main
         data-testid="center-zone"
-        className="@container order-3 min-h-0 min-w-0 shrink-0 overflow-y-auto overscroll-contain p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-2 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain sm:pb-4 lg:order-2 lg:row-start-1 lg:p-6 lg:pb-6"
+        className="@container order-3 min-h-0 min-w-0 shrink-0 p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-2 sm:min-h-0 sm:pb-4 lg:order-2 lg:row-start-1 lg:p-6 lg:pb-6"
       >
         {view === "settings" ? <Settings /> : <Servers />}
       </main>

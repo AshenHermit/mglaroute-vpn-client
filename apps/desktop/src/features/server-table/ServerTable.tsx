@@ -26,7 +26,9 @@ type ServerTableProps = {
 };
 
 function isFailed(profile: Profile): boolean {
-  return profile.latencyMs === null || profile.latencyMs <= 0 || !profile.reachable;
+  return (
+    profile.latencyMs === null || profile.latencyMs <= 0 || !profile.reachable
+  );
 }
 
 const iconButtonClass =
@@ -69,18 +71,24 @@ export function ServerTable({
         <TableHead>
           <TableRow>
             <TableHeaderCell className="whitespace-nowrap" />
-            <TableHeaderCell className="whitespace-nowrap">Server</TableHeaderCell>
+            <TableHeaderCell className="whitespace-nowrap">
+              Server
+            </TableHeaderCell>
             <TableHeaderCell className="hidden whitespace-nowrap sm:table-cell">
               Protocol
             </TableHeaderCell>
             <TableHeaderCell className="hidden whitespace-nowrap sm:table-cell">
               Address
             </TableHeaderCell>
-            <TableHeaderCell className="whitespace-nowrap">Delay</TableHeaderCell>
-            <TableHeaderCell className="whitespace-nowrap">State</TableHeaderCell>
+            <TableHeaderCell className="whitespace-nowrap">
+              Delay
+            </TableHeaderCell>
+            <TableHeaderCell className="whitespace-nowrap">
+              State
+            </TableHeaderCell>
           </TableRow>
         </TableHead>
-        <TableBody>
+        <TableBody className="overflow-y-auto overscroll-contain h-full">
           {sorted.length === 0 ? (
             <TableRow>
               <TableCell colSpan={6} className="text-muted-foreground">
@@ -94,7 +102,11 @@ export function ServerTable({
               const isConnected = connectedId === profile.id;
               const isActive = activeId === profile.id;
               const isFavorite = favoriteIds.has(profile.id);
-              const state = isConnected ? "connected" : isActive ? "active" : "inactive";
+              const state = isConnected
+                ? "connected"
+                : isActive
+                  ? "active"
+                  : "inactive";
               const name = profile.remarks ?? profile.serverId;
               const label = isConnected
                 ? `Connected server: ${name}`
@@ -159,7 +171,10 @@ export function ServerTable({
                           onClick={() => onOpenDetails?.(profile)}
                           className={iconButtonClass}
                         >
-                          <ChevronRight aria-hidden="true" className="h-4 w-4" />
+                          <ChevronRight
+                            aria-hidden="true"
+                            className="h-4 w-4"
+                          />
                         </button>
                       </span>
                     </div>

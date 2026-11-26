@@ -7,7 +7,12 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { filterProfiles } from "../features/server-list/server-filter";
 import { ServerDetailsDialog } from "../features/server-list/ServerDetailsDialog";
@@ -28,7 +33,9 @@ export default function Servers() {
   const probeTestingIds = useAppStore((store) => store.probeTestingIds);
   const lastProbeFinishedAt = useAppStore((store) => store.lastProbeFinishedAt);
   const selectedProfileId = useAppStore((store) => store.selectedProfileId);
-  const setSelectedProfileId = useAppStore((store) => store.setSelectedProfileId);
+  const setSelectedProfileId = useAppStore(
+    (store) => store.setSelectedProfileId,
+  );
   const setProbeStarted = useAppStore((store) => store.setProbeStarted);
   const setProbeSettled = useAppStore((store) => store.setProbeSettled);
   const connection = useConnectionStore((store) => store.state);
@@ -100,7 +107,9 @@ export default function Servers() {
       if (code === "busy" || code === "probe_busy") {
         setNotice("Another operation is in progress. Try again shortly.");
       } else if (code === "probe") {
-        setNotice("Server test failed. Check xray and the network, then retry.");
+        setNotice(
+          "Server test failed. Check xray and the network, then retry.",
+        );
       } else {
         setNotice("Could not run server test");
       }
@@ -118,7 +127,7 @@ export default function Servers() {
   };
 
   return (
-    <Card>
+    <Card className="h-full grid grid-rows-[auto_auto]">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle>Servers</CardTitle>
@@ -157,7 +166,9 @@ export default function Servers() {
             onChange={(event) => setSearch(event.target.value)}
             className="min-w-0 max-w-xs flex-1"
           />
-          <span className="text-xs text-muted-foreground">{visibleProfiles.length} shown</span>
+          <span className="text-xs text-muted-foreground">
+            {visibleProfiles.length} shown
+          </span>
         </div>
         {lastProbeFinishedAt && (
           <p
@@ -182,7 +193,8 @@ export default function Servers() {
         <ServerDetailsDialog
           profile={detailsProfile}
           connected={
-            connection.status === "connected" && detailsProfile?.id === connection.profileId
+            connection.status === "connected" &&
+            detailsProfile?.id === connection.profileId
           }
           onClose={() => setDetailsProfile(null)}
           onSetActive={(id) => {
