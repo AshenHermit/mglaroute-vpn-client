@@ -83,7 +83,7 @@ export function AppShell() {
 
       <main
         data-testid="center-zone"
-        className="@container order-3 min-h-0 min-w-0 shrink-0 p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-2 sm:min-h-0 sm:pb-4 lg:order-2 lg:row-start-1 lg:p-6 lg:pb-6"
+        className="@container order-3 min-h-0 min-w-0 shrink-0 overflow-y-auto p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-2 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain sm:pb-4 lg:order-2 lg:row-start-1 lg:p-6 lg:pb-6"
       >
         {view === "settings" ? <Settings /> : <Servers />}
       </main>
