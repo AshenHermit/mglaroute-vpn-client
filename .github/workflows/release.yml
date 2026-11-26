@@ -26,7 +26,21 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Fail before building/publishing if the tag and the packaged version drift.
+      - name: Guard tag matches tauri.conf.json version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $expected = "v$version"
+          if ($env:RELEASE_TAG -ne $expected) {
+            throw "Release tag '$env:RELEASE_TAG' does not match tauri.conf.json version $version (expected '$expected')"
+          }
+
       - run: pnpm binaries:fetch
+        env:
+          XRAY_VERSION: ${{ vars.XRAY_VERSION }}
 
       - run: pnpm binaries:verify
 

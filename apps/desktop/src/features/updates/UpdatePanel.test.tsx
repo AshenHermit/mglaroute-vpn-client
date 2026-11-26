@@ -13,6 +13,8 @@ import { UpdatePanel } from "./UpdatePanel";
 
 const mockedInvoke = vi.mocked(invoke);
 
+const installFailureNotice = "Update failed — VPN was disconnected; reconnect if needed";
+
 const info: UpdateInfo = {
   version: "0.2.0",
   currentVersion: "0.1.0",
@@ -90,7 +92,8 @@ describe("UpdatePanel", () => {
     act(() => {
       useAppStore.setState({ update: { ...info, canInstallInApp: false } });
     });
-    mockedInvoke.mockResolvedValueOnce(undefined as never);
+    const pending = deferred<void>();
+    mockedInvoke.mockReturnValueOnce(pending.promise as never);
 
     render(<UpdatePanel />);
     fireEvent.click(screen.getByRole("button", { name: "Open release page" }));
@@ -98,7 +101,31 @@ describe("UpdatePanel", () => {
     expect(mockedInvoke).toHaveBeenCalledWith("update_open_releases", expect.anything(), {
       url: info.releaseUrl,
     });
-    await waitFor(() => expect(useAppStore.getState().updateInstalling).toBe(false));
+    expect(useAppStore.getState().updateInstalling).toBe(true);
+
+    await act(async () => {
+      pending.resolve();
+      await pending.promise;
+    });
+
+    expect(useAppStore.getState().updateInstalling).toBe(false);
+    expect(useAppStore.getState().notice).toBeNull();
+  });
+
+  it("keeps the generic notice when opening the release page fails", async () => {
+    act(() => {
+      useAppStore.setState({ update: { ...info, canInstallInApp: false } });
+    });
+    mockedInvoke.mockRejectedValueOnce(
+      new CommandInvocationError("update_open_releases", "update"),
+    );
+
+    render(<UpdatePanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Open release page" }));
+
+    await waitFor(() => expect(useAppStore.getState().notice).toBe("Update failed"));
+    expect(useAppStore.getState().noticeVariant).toBe("error");
+    expect(useAppStore.getState().updateInstalling).toBe(false);
   });
 
   it("install_button_disabled_while_installing", () => {
@@ -127,7 +154,7 @@ describe("UpdatePanel", () => {
     expect(screen.getByText(/1024/)).toBeTruthy();
   });
 
-  it("reports a generic failure and clears installing without leaking native error text", async () => {
+  it("reports a disconnected-VPN notice on a rejected install without leaking native error text", async () => {
     act(() => {
       useAppStore.setState({ update: info });
     });
@@ -137,7 +164,7 @@ describe("UpdatePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Install update" }));
 
     await waitFor(() => expect(useAppStore.getState().updateInstalling).toBe(false));
-    expect(useAppStore.getState().notice).toBe("Update failed");
+    expect(useAppStore.getState().notice).toBe(installFailureNotice);
     expect(useAppStore.getState().noticeVariant).toBe("error");
     expect(screen.queryByText(/Tauri command/)).toBeNull();
   });
@@ -155,7 +182,7 @@ describe("UpdatePanel", () => {
     const install = screen.getByRole("button", { name: "Install update" });
     fireEvent.click(install);
 
-    await waitFor(() => expect(useAppStore.getState().notice).toBe("Update failed"));
+    await waitFor(() => expect(useAppStore.getState().notice).toBe(installFailureNotice));
     expect(useAppStore.getState().updateInstalling).toBe(false);
     expect(install.hasAttribute("disabled")).toBe(false);
   });

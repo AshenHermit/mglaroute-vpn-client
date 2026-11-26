@@ -60,11 +60,24 @@ describe("release config wiring", () => {
     contains(workflow, "secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
   });
 
+  it("pins the updater's xray fetch via the XRAY_VERSION repo variable", () => {
+    contains(workflow, "XRAY_VERSION: ${{ vars.XRAY_VERSION }}");
+  });
+
+  it("fails early when the release tag does not match the packaged version", () => {
+    contains(workflow, "RELEASE_TAG: ${{ github.ref_name }}");
+    contains(workflow, "ConvertFrom-Json");
+    contains(workflow, "tauri.conf.json");
+    contains(workflow, '$expected = "v$version"');
+  });
+
   it("Tauri config enables updater artifacts and points at the releases latest.json", () => {
     contains(tauriConfig, "createUpdaterArtifacts");
     contains(
       tauriConfig,
       "https://github.com/AshenHermit/mglaroute-vpn-client/releases/latest/download/latest.json",
     );
+    contains(tauriConfig, '"installMode": "passive"');
+    contains(tauriConfig, "PUBLIC_KEY_PLACEHOLDER");
   });
 });

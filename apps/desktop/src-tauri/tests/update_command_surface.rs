@@ -98,3 +98,69 @@ fn install_source_aborts_shutdown_gate_on_failure() {
         "abort_shutdown() must run between the failed install and returning update error"
     );
 }
+
+#[test]
+fn install_source_waits_for_all_domain_permits_with_one_shot_removed() {
+    let source = update_source();
+    let cleanup = source
+        .find("cleanup(")
+        .expect("install must call shared lifecycle cleanup");
+
+    // Every guard acquisition must be a closure passed to the bounded wait —
+    // no bare one-shot try_acquire() that fails while a scheduler tick holds
+    // the slot. The helper itself owns the short sleep loop and 2 s deadline.
+    let mut acquisitions = 0;
+    for (pos, _) in source.match_indices(".try_acquire()") {
+        let prefix = &source[pos.saturating_sub(96)..pos];
+        assert!(
+            prefix.contains("wait_for_permit(deadline, || "),
+            "one-shot try_acquire() must not block Install while a scheduler holds a guard"
+        );
+        acquisitions += 1;
+    }
+    assert_eq!(acquisitions, 3, "all three domain guards must use bounded wait");
+    assert!(
+        source.contains("Duration::from_secs(2)"),
+        "bounded wait must have a two-second deadline"
+    );
+    assert!(
+        source.contains("tokio::time::sleep"),
+        "bounded wait must sleep briefly between retries"
+    );
+
+    for guard in ["connection_guard", "probe_guard", "mutation_guard"] {
+        let acquired = try_acquire_position(&source, guard);
+        assert!(
+            acquired < cleanup,
+            "{guard} bounded acquisition must finish before teardown starts"
+        );
+    }
+}
+
+#[test]
+fn install_source_captures_profile_before_cleanup_and_reconnects_after_abort() {
+    let source = update_source();
+    let capture = source
+        .find("connection.profile_id")
+        .expect("install must capture the live profile id before teardown");
+    let cleanup = source
+        .find("cleanup(")
+        .expect("install must call shared lifecycle cleanup");
+    let abort = source
+        .find("abort_shutdown()")
+        .expect("failed install must release the shutdown gate");
+    let reconnect = source
+        .find("connect_impl(&state, Some(id))")
+        .expect("failed install must restore the captured VPN connection");
+    let error = source
+        .find("Err(CommandError::Update)")
+        .expect("failed install must map to the update error");
+    assert!(
+        capture < cleanup,
+        "profile id must be captured while the connection is still live"
+    );
+    assert!(
+        abort < reconnect && reconnect < error,
+        "reconnect must be attempted after releasing the gate, before returning the error"
+    );
+}

@@ -1,4 +1,4 @@
-import { UpdateInfoSchema } from "@mglaroute/contracts";
+import { UpdateInfoSchema, type UpdateInfo } from "@mglaroute/contracts";
 import { useEffect, useRef } from "react";
 import { invoke } from "../../lib/invoke";
 import { useAppStore } from "../../stores/app.store";
@@ -15,6 +15,10 @@ export function useUpdateCheck(): void {
   const setUpdate = useAppStore((store) => store.setUpdate);
   const setNotice = useAppStore((store) => store.setNotice);
   const announced = useRef(new Set<string>());
+  // Rust collapses network/config failures to `null`, identical to "no update".
+  // Once a version has been displayed, a later `null` must not erase it and
+  // strand the Install button for up to six hours.
+  const displayed = useRef<UpdateInfo | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -23,6 +27,11 @@ export function useUpdateCheck(): void {
       void invoke("update_check", UpdateInfoSchema.nullable())
         .then((info) => {
           if (!active) return;
+          if (info === null && displayed.current !== null) {
+            // Indistinguishable quiet failure — keep the last known update.
+            return;
+          }
+          displayed.current = info;
           setUpdate(info);
           if (info && !announced.current.has(info.version)) {
             announced.current.add(info.version);

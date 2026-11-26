@@ -34,21 +34,30 @@ export function UpdatePanel() {
   // stale progress line must not strand retry after a failed install.
   const busy = updateInstalling;
 
-  const perform = async (action: () => Promise<unknown>) => {
+  const perform = async (
+    action: () => Promise<unknown>,
+    failureNotice = "Update failed",
+  ) => {
     // Set synchronously on click: a second click in the same tick sees busy.
     setUpdateInstalling(true);
     try {
       await action();
     } catch (error) {
       if (error instanceof CommandInvocationError) {
-        setNotice("Update failed", "error");
+        setNotice(failureNotice, "error");
       }
     } finally {
       setUpdateInstalling(false);
     }
   };
 
-  const install = () => void perform(() => invoke("update_install", z.null()));
+  // Install tears down the VPN before download; on failure Rust reconnects on
+  // a best-effort basis, so the user must be told the connection was affected.
+  const install = () =>
+    void perform(
+      () => invoke("update_install", z.null()),
+      "Update failed — VPN was disconnected; reconnect if needed",
+    );
   const openReleasePage = () =>
     void perform(() => invoke("update_open_releases", z.null(), { url: update.releaseUrl }));
 

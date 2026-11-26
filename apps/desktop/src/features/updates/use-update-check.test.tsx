@@ -78,6 +78,29 @@ describe("useUpdateCheck", () => {
     expect(mocks.setNotice).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a displayed update and its Install button when a later check resolves null", async () => {
+    mockedInvoke.mockResolvedValueOnce(info).mockResolvedValueOnce(null);
+
+    renderHook(() => useUpdateCheck());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.setUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.setUpdate).toHaveBeenCalledWith(info);
+    expect(mocks.setNotice).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(UPDATE_CHECK_INTERVAL_MS);
+      await Promise.resolve();
+    });
+
+    // A quiet Rust failure is indistinguishable from "no update"; the store
+    // keeps `info`, so the panel still shows the version and Install action.
+    expect(mocks.setUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.setUpdate).not.toHaveBeenCalledWith(null);
+    expect(mocks.setNotice).toHaveBeenCalledTimes(1);
+  });
+
   it("is silent on failure and retries on the next tick", async () => {
     mockedInvoke.mockRejectedValueOnce(new Error("network down"));
 
