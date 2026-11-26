@@ -550,6 +550,11 @@ mod tests {
     use crate::{invoke_handler, COMMAND_NAMES};
     use crate::storage::models::{Profile, ServiceProfile, Subscription};
     use crate::storage::repos::{profile_repo, service_profile_repo, settings_repo};
+    use std::sync::Mutex;
+
+    // Two tests replace the process-global EVENT_SINK. Serialize them so a
+    // faulted event from one cannot land in the other's recorder.
+    static EVENT_SINK_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     struct FakeLauncher {
         stopped: Arc<AtomicBool>,
@@ -847,6 +852,9 @@ mod tests {
 
     #[tokio::test]
     async fn connect_port_in_use_returns_distinct_error_without_faulted_event() {
+        let _sink_guard = EVENT_SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let conn = conn_with_profiles();
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
@@ -1438,6 +1446,9 @@ mod tests {
 
     #[test]
     fn connection_state_event_emitted() {
+        let _sink_guard = EVENT_SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let recorder = Arc::new(RecordingEventSink::new());
         set_event_sink(recorder.clone());
 
