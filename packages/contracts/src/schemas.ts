@@ -24,6 +24,14 @@ export const SubscriptionSchema = z.object({
 });
 export type Subscription = z.infer<typeof SubscriptionSchema>;
 
+export const FeedServiceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type FeedService = z.infer<typeof FeedServiceSchema>;
+
+export const FeedServiceListSchema = z.array(FeedServiceSchema);
+
 export const ProfileSchema = z.object({
   id: z.string(),
   subscriptionId: z.string(),
