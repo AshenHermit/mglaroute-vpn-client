@@ -33,6 +33,7 @@ pub mod service_profile;
 pub mod settings;
 pub mod subscription;
 pub mod update;
+pub mod version;
 
 pub use connection::{connection_connect, connection_disconnect, connection_status};
 pub use probe::{best_eligible_profile, probe_cancel, probe_run, profile_list};
@@ -45,6 +46,7 @@ pub use subscription::{
     subscription_update,
 };
 pub(crate) use update::{update_check, update_install, update_open_releases};
+pub use version::app_version;
 
 /// Generic, secret-free command errors. Underlying library errors are never
 /// forwarded: reqwest messages can echo a subscription URL and its token.
@@ -958,6 +960,7 @@ mod tests {
                 "anti_dpi_start",
                 "anti_dpi_status",
                 "anti_dpi_stop",
+                "app_version",
                 "connection_connect",
                 "connection_disconnect",
                 "connection_status",
