@@ -100,6 +100,7 @@ docs/superpowers/specs/   design docs
 
 ## Verification
 
+- GitHub Actions is the authoritative check on PRs into `main` (`.github/workflows/ci.yml`): jobs `test-js` (`pnpm test`) and `test-rust` (`cargo test` with the test-only `TAURI_CONFIG` override). Both must be green; local runs are optional.
 - `pnpm test` runs Nx projects plus `vitest run scripts` (sha256/asset suites);
   exit code is meaningful. `pnpm build`: set `NX_DAEMON='false'` (Nx daemon flake).
   `Cannot switch to pnpm@9` and zod annotation warnings are pre-existing.
