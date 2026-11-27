@@ -6,9 +6,13 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test-js:
     runs-on: windows-latest
+    timeout-minutes: 15
     env:
       NX_DAEMON: 'false'
     steps:
@@ -25,6 +29,7 @@ jobs:
 
   test-rust:
     runs-on: windows-latest
+    timeout-minutes: 25
     env:
       TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
     steps:
