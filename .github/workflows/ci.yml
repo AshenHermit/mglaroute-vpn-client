@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test-js:
+    runs-on: windows-latest
+    env:
+      NX_DAEMON: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  test-rust:
+    runs-on: windows-latest
+    env:
+      TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml -- --test-threads=1
