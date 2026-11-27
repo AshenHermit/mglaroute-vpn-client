@@ -1,5 +1,6 @@
 pub mod models;
 pub mod repos;
+pub mod routing_repo;
 
 use rusqlite::{Connection, Result};
 

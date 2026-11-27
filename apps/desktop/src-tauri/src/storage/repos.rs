@@ -3,7 +3,7 @@ use rusqlite::{params, types::Type, Connection, Error, OptionalExtension, Result
 
 use super::models::{Profile, ProfileServiceResult, ServiceProfile, Settings, Subscription};
 
-fn ts_string(value: &DateTime<Utc>) -> String {
+pub(crate) fn ts_string(value: &DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
@@ -21,7 +21,7 @@ fn read_ts_opt(row: &Row<'_>, column: &str) -> Result<Option<DateTime<Utc>>> {
     }
 }
 
-fn read_ts(row: &Row<'_>, column: &str) -> Result<DateTime<Utc>> {
+pub(crate) fn read_ts(row: &Row<'_>, column: &str) -> Result<DateTime<Utc>> {
     read_ts_opt(row, column)?
         .ok_or_else(|| Error::InvalidColumnType(0, column.to_string(), Type::Null))
 }

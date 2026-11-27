@@ -156,6 +156,64 @@ impl Default for Settings {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutingProfile {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub is_active: bool,
+    pub sort: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Default for RoutingProfile {
+    fn default() -> Self {
+        let now = Utc::now();
+        Self {
+            id: String::new(),
+            name: String::new(),
+            enabled: true,
+            is_active: false,
+            sort: 0,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutingRule {
+    pub id: String,
+    pub profile_id: String,
+    pub remark: String,
+    pub enabled: bool,
+    pub outbound: String,
+    pub domains: String,
+    pub ips: String,
+    pub sort: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Default for RoutingRule {
+    fn default() -> Self {
+        let now = Utc::now();
+        Self {
+            id: String::new(),
+            profile_id: String::new(),
+            remark: String::new(),
+            enabled: true,
+            outbound: "proxy".to_string(),
+            domains: "[]".to_string(),
+            ips: "[]".to_string(),
+            sort: 0,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
