@@ -33,6 +33,7 @@ pub mod service_profile;
 pub mod settings;
 pub mod subscription;
 pub mod update;
+pub mod version;
 
 pub use connection::{connection_connect, connection_disconnect, connection_status};
 pub use probe::{best_eligible_profile, probe_cancel, probe_run, profile_list};
@@ -45,6 +46,7 @@ pub use subscription::{
     subscription_update,
 };
 pub(crate) use update::{update_check, update_install, update_open_releases};
+pub use version::app_version;
 
 /// Generic, secret-free command errors. Underlying library errors are never
 /// forwarded: reqwest messages can echo a subscription URL and its token.
@@ -521,20 +523,20 @@ pub async fn auto_test_loop(state: AppState) {
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        let enabled = {
+        let Ok(settings) = ({
             let conn = state.inner.conn.lock().await;
             settings_repo::get(&conn)
-                .map(|settings| settings.auto_test_enabled)
-                .unwrap_or(false)
+        }) else {
+            continue;
         };
-        if enabled {
+        if settings.auto_test_enabled {
             if let Ok(_permit) = state.probe_permit() {
                 let cancel = state.start_probe();
                 let _ = probe::run_impl(
                     &state,
                     true,
                     cancel,
-                    &crate::probe::cycle::TauriProgress,
+                    &probe::ReconnectProgress::new(state.clone(), settings),
                 )
                 .await;
                 state.finish_probe();
@@ -555,9 +557,13 @@ mod tests {
 
     use super::*;
     use crate::anti_dpi;
-    use crate::probe::cycle::{ProbeOutcome, ProbeProgress};
+    use crate::probe::cycle::{
+        ProbeOutcome, ProbeProgress, ProbeServerEvent, ProbeServerStatus, ProbeServiceResult,
+    };
     use crate::commands::connection::{connect_impl, select_connect_profile};
-    use crate::commands::probe::{apply_reconnect, candidates};
+    use crate::commands::probe::{
+        apply_reconnect, candidates, missing_server_target, switch_if_current_missing,
+    };
     use crate::platform::proxy::{
         override_string, proxy_string, InMemoryProxy, PreviousProxy, ProxyBackend, ProxyError,
     };
@@ -958,6 +964,7 @@ mod tests {
                 "anti_dpi_start",
                 "anti_dpi_status",
                 "anti_dpi_stop",
+                "app_version",
                 "connection_connect",
                 "connection_disconnect",
                 "connection_status",
@@ -1161,6 +1168,257 @@ mod tests {
             proxy_port: Some(port),
         };
         config_path
+    }
+
+    fn done_event(id: &str, latency: Option<u64>, services: &[(&str, bool)]) -> ProbeServerEvent {
+        ProbeServerEvent {
+            profile_id: id.to_string(),
+            status: ProbeServerStatus::Done,
+            latency_ms: latency,
+            service_results: services
+                .iter()
+                .map(|(service_profile_id, reachable)| ProbeServiceResult {
+                    service_profile_id: (*service_profile_id).to_string(),
+                    reachable: *reachable,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn absent_current_picks_best_done_server() {
+        let conn = conn_with_profiles();
+        let event = done_event("p-best", Some(10), &[]);
+        assert_eq!(
+            missing_server_target(&conn, Some("p-gone"), &event).expect("select target"),
+            Some("p-best".to_string())
+        );
+    }
+
+    #[test]
+    fn present_current_no_emergency_switch() {
+        let conn = conn_with_profiles();
+        let event = done_event("p-best", Some(10), &[]);
+        assert_eq!(
+            missing_server_target(&conn, Some("p-1"), &event).expect("select target"),
+            None
+        );
+        assert_eq!(
+            missing_server_target(&conn, None, &event).expect("select target"),
+            None
+        );
+    }
+
+    #[test]
+    fn failing_sample_no_emergency_switch() {
+        let conn = conn_with_profiles();
+
+        let mut failed = done_event("p-best", Some(10), &[]);
+        failed.status = ProbeServerStatus::Failed;
+        assert_eq!(
+            missing_server_target(&conn, Some("p-gone"), &failed).expect("select target"),
+            None
+        );
+
+        for latency in [None, Some(0)] {
+            let event = done_event("p-best", latency, &[]);
+            assert_eq!(
+                missing_server_target(&conn, Some("p-gone"), &event).expect("select target"),
+                None
+            );
+        }
+
+        service_profile_repo::insert(
+            &conn,
+            &ServiceProfile {
+                id: "svc-active".to_string(),
+                name: "active".to_string(),
+                test_urls: json!(["https://service.test"]).to_string(),
+                is_enabled: true,
+                ..Default::default()
+            },
+        )
+        .expect("insert service profile");
+
+        let missing_service = done_event("p-best", Some(10), &[]);
+        assert_eq!(
+            missing_server_target(&conn, Some("p-gone"), &missing_service).expect("select target"),
+            None
+        );
+        let unreachable_service = done_event("p-best", Some(10), &[("svc-active", false)]);
+        assert_eq!(
+            missing_server_target(&conn, Some("p-gone"), &unreachable_service).expect("select target"),
+            None
+        );
+    }
+
+    #[test]
+    fn missing_target_uses_persisted_delay() {
+        let conn = conn_with_profiles();
+        profile_repo::set_result(&conn, "p-1", Some(5), true, Utc::now()).expect("seed result");
+        let event = done_event("p-best", Some(10), &[]);
+        assert_eq!(
+            missing_server_target(&conn, Some("p-gone"), &event).expect("select target"),
+            Some("p-1".to_string())
+        );
+    }
+
+    #[test]
+    fn missing_server_target_ignores_persisted_failed_service() {
+        let conn = conn_with_profiles();
+        service_profile_repo::insert(
+            &conn,
+            &ServiceProfile {
+                id: "svc-active".to_string(),
+                name: "active".to_string(),
+                test_urls: json!(["https://service.test"]).to_string(),
+                is_enabled: true,
+                ..Default::default()
+            },
+        )
+        .expect("insert service profile");
+        profile_repo::set_result(&conn, "p-1", Some(5), false, Utc::now()).expect("seed result");
+        profile_repo::upsert_service_result(&conn, "p-1", "svc-active", false, Utc::now())
+            .expect("seed failed service result");
+
+        let event = done_event("p-best", Some(10), &[("svc-active", true)]);
+        assert_eq!(
+            missing_server_target(&conn, Some("p-gone"), &event).expect("select target"),
+            Some("p-best".to_string()),
+            "a stale faster server failing an active service must not win"
+        );
+    }
+
+    #[tokio::test]
+    async fn absent_current_switches_without_disconnecting() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings.auto_reconnect_enabled = true;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+        let proxy = Arc::new(InMemoryProxy::new(original.clone()));
+        let restores = Arc::new(AtomicUsize::new(0));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(SharedProxy {
+                inner: proxy.clone(),
+                restores: restores.clone(),
+            }),
+            Box::new(FakeLauncher {
+                stopped: stopped.clone(),
+            }),
+        );
+        // Connected to a server that is no longer in the imported profile list.
+        prepare_connected(&state, "p-gone", original, port, stopped.clone(), false).await;
+
+        switch_if_current_missing(&state, &settings, &done_event("p-best", Some(10), &[]))
+            .await
+            .expect("emergency switch");
+
+        {
+            let runtime = state.inner.runtime.lock().await;
+            assert_eq!(runtime.connection.status, ConnectionStatus::Connected);
+            assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-best"));
+            assert!(runtime.last_switch.is_none(), "cooldown must not be touched");
+        }
+        assert_eq!(
+            proxy.state(),
+            PreviousProxy::Manual {
+                server: proxy_string(port),
+                override_list: override_string(&[]),
+            },
+            "proxy ownership stays with the new core"
+        );
+        assert_eq!(
+            restores.load(Ordering::SeqCst),
+            0,
+            "switch must never restore the original proxy first"
+        );
+        assert!(stopped.load(Ordering::SeqCst), "old core must be stopped");
+    }
+
+    #[tokio::test]
+    async fn auto_reconnect_off_no_emergency_switch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings.auto_reconnect_enabled = false;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+        let stopped = Arc::new(AtomicBool::new(false));
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(InMemoryProxy::new(original.clone())),
+            Box::new(FakeLauncher {
+                stopped: stopped.clone(),
+            }),
+        );
+        prepare_connected(&state, "p-gone", original, port, stopped, false).await;
+
+        switch_if_current_missing(&state, &settings, &done_event("p-best", Some(10), &[]))
+            .await
+            .expect("gate skips");
+
+        let runtime = state.inner.runtime.lock().await;
+        assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-gone"));
+        assert_eq!(runtime.connection.status, ConnectionStatus::Connected);
+    }
+
+    #[tokio::test]
+    async fn busy_connection_no_emergency_switch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = conn_with_profiles();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let mut settings = settings_repo::get(&conn).expect("settings");
+        settings.local_proxy_port = i64::from(port);
+        settings.system_proxy_enabled = true;
+        settings.auto_reconnect_enabled = true;
+        settings_repo::update(&conn, &settings).expect("update settings");
+
+        let original = PreviousProxy::Manual {
+            server: "proxy.example:8080".to_string(),
+            override_list: "<local>;intranet".to_string(),
+        };
+        let stopped = Arc::new(AtomicBool::new(false));
+        let state = AppState::new(
+            conn,
+            dir.path().to_path_buf(),
+            Box::new(InMemoryProxy::new(original.clone())),
+            Box::new(FakeLauncher {
+                stopped: stopped.clone(),
+            }),
+        );
+        prepare_connected(&state, "p-gone", original, port, stopped, false).await;
+
+        let _permit = state.connection_permit().expect("connection permit");
+        switch_if_current_missing(&state, &settings, &done_event("p-best", Some(10), &[]))
+            .await
+            .expect("busy tick skipped");
+
+        let runtime = state.inner.runtime.lock().await;
+        assert_eq!(runtime.connection.profile_id.as_deref(), Some("p-gone"));
+        assert_eq!(runtime.connection.status, ConnectionStatus::Connected);
     }
 
     #[tokio::test]

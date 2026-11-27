@@ -279,6 +279,32 @@ describe("ConnectionPanel", () => {
     expect(active.textContent).not.toContain("rawConfig");
   });
 
+  it("shows the connected server id when it is missing from the profile list", async () => {
+    render(<ConnectionPanel />);
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "connection_status",
+        expect.anything(),
+      ),
+    );
+    const handler = mockedListen.mock.calls.find(
+      ([event]) => event === EVENTS.connectionState,
+    )?.[1];
+    expect(handler).toBeTypeOf("function");
+
+    act(() => {
+      handler?.({
+        payload: { status: "connected", profileId: "p-gone", proxyPort: 10808 },
+      } as never);
+    });
+
+    const active = screen.getByTestId("active-server");
+    expect(active.getAttribute("data-state")).toBe("connected");
+    expect(active.textContent).toContain("Connected server (not in list)");
+    expect(active.textContent).toContain("p-gone");
+    expect(active.textContent).not.toContain("No active server");
+  });
+
   it("starts the timer at 00:00 on connect and resets after a disconnect event", async () => {
     render(<ConnectionPanel />);
     await waitFor(() =>

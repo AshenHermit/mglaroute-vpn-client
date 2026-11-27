@@ -48,6 +48,7 @@ export function ServerRail({
 }) {
   const subscriptions = useAppStore((store) => store.subscriptions);
   const serverCount = useAppStore((store) => store.profiles.length);
+  const clientVersion = useAppStore((store) => store.clientVersion);
   const filter = useUiStore((state) => state.filter);
   const setFilter = useUiStore((state) => state.setFilter);
   const [antiDpi, setAntiDpi] = useState("unknown");
@@ -73,6 +74,11 @@ export function ServerRail({
         <h1 className="sr-only text-base font-semibold tracking-wide text-foreground lg:not-sr-only">
           mglaroute
         </h1>
+        {clientVersion !== null && (
+          <span data-testid="client-version" className="text-xs text-muted-foreground">
+            v{clientVersion}
+          </span>
+        )}
         <button
           type="button"
           aria-label="Open settings"

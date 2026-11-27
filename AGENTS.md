@@ -156,6 +156,13 @@ docs/superpowers/specs/   design docs
   best-effort on Windows (updater may exit before the final event).
 - Update state (`update`, `updateInstalling`, `updateProgress`) is session-only
   in Zustand; no SQLite change, no persisted "skip this version".
+- Running client version: Tauri `app_version` returns
+  `app.package_info().version` (currently `0.2.2`). `AppShell` fetches it once
+  into session-only `clientVersion: string | null`; failure leaves it `null`
+  with no notice (no native error text in UI). Render sites: `v{version}` in the
+  `ServerRail` title row and `Current version {version}` in `UpdatePanel` on
+  both cards (update-found and no-update); the available release keeps its own
+  `Version {update.version}` line. No new contract schema or persisted value.
 - Subscription decode is cascading best-effort, like v2rayN `AddBatchServers`:
   whole-body base64 (standard + URL-safe) → plain lines. MVP URI schemes:
   `vmess://` (legacy base64 JSON), `vless://`, `ss://` (SIP002 + legacy), `trojan://`.
@@ -188,6 +195,25 @@ docs/superpowers/specs/   design docs
   (connect/disconnect/apply_reconnect), `probe_busy` (probe_run/auto-test),
   `mutation_busy` (subscriptions/settings/refetch). `probe_busy` never blocks
   Connect. Stop test keeps partial samples but skips the global re-sort.
+- Auto-reconnect never disconnects on its own: `ReconnectDecision` has only
+  `None` and `Switch { profile_id }`. With no passing candidate it returns
+  `None`, so the live proxy stays up. Deliberate teardown stays limited to
+  Disconnect, tray Exit and updater install.
+- Immediate absent-server switch: `ReconnectProgress` wraps probe progress and,
+  on each `probe-server` event with `status: done`, spawns
+  `switch_if_current_missing`. Under the connection permit, gated by
+  `auto_reconnect_enabled` and `Connected`, it switches when the current
+  `profile_id` is absent from present enabled profiles and the fresh sample has
+  positive latency and passes every enabled service profile. Target is the best
+  eligible server: persisted candidates with the freshly probed one overriding
+  its stored result. It reuses `connect_impl` (snapshot/guard/proxy ownership),
+  never `disconnect_impl`; no "Disconnect" state, no proxy restore, no
+  `last_switch` write (post-cycle `apply_reconnect` still owns that). Busy
+  permit, auto-reconnect off, present current or failing sample ⇒ no switch.
+- Absent connected server stays visible: when `connected` and the active id has
+  no profile row, `ConnectionPanel` shows the fixed label
+  `Connected server (not in list)` plus the backend `profileId`, never
+  `No active server`. No new data source or command.
 - No orphaned xray cores: every core joins a Windows Job Object
   (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) with a PID sidecar next to its temp config;
   startup reaping kills only PIDs verified as xray with a matching config path.
@@ -205,6 +231,7 @@ docs/superpowers/specs/   design docs
   Tauri `externalBin` bundles them. `XRAY_BINARY_PATH` override for dev.
 - SQLite tables: `subscriptions`, `profiles`, `service_profiles`,
   `profile_service_results`, `settings`. Test results never stored inside profile row.
+  No migration for this pass: absent-server marking only flips `present = 0`.
 - Never put subscription URLs, credentials or raw config into logs — or into
   probe PID sidecars/events (sidecars hold only a verified PID and config path).
 

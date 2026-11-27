@@ -13,6 +13,7 @@ export function UpdatePanel() {
   const update = useAppStore((store) => store.update);
   const updateInstalling = useAppStore((store) => store.updateInstalling);
   const updateProgress = useAppStore((store) => store.updateProgress);
+  const clientVersion = useAppStore((store) => store.clientVersion);
   const setUpdateInstalling = useAppStore((store) => store.setUpdateInstalling);
   const setNotice = useAppStore((store) => store.setNotice);
 
@@ -23,6 +24,7 @@ export function UpdatePanel() {
           <CardTitle>Updates</CardTitle>
         </CardHeader>
         <CardContent>
+          <p className="text-sm text-muted-foreground">Current version {clientVersion ?? "—"}</p>
           <p className="text-sm text-muted-foreground">No update available</p>
         </CardContent>
       </Card>
@@ -67,6 +69,7 @@ export function UpdatePanel() {
         <CardTitle>Updates</CardTitle>
       </CardHeader>
       <CardContent>
+        <p className="text-sm text-muted-foreground">Current version {clientVersion ?? "—"}</p>
         <p className="text-sm font-medium">Version {update.version}</p>
         {update.notes && <p className="mt-1 text-sm text-muted-foreground">{update.notes}</p>}
         {updateProgress && (

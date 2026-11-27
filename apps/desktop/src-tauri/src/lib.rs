@@ -33,6 +33,7 @@ macro_rules! command_list {
 }
 
 command_list!(
+    app_version,
     subscription_add,
     subscription_list,
     subscription_update,

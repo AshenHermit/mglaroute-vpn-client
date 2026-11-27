@@ -5,22 +5,22 @@ use chrono::{DateTime, Duration, Utc};
 use crate::storage::models::Settings;
 
 /// Action to take after a probe cycle when auto-connect is enabled.
+/// When no profile passes, the live connection is kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReconnectDecision {
     /// Keep the current connection.
     None,
     /// Switch the active proxy to the named profile.
     Switch { profile_id: String },
-    /// No profile passes the active service profiles; drop the connection.
-    Disconnect,
 }
 
-/// Decide whether to stay, switch, or disconnect after a probe cycle.
+/// Decide whether to stay or switch after a probe cycle.
 ///
 /// `candidates` is `(profile_id, latency_ms, passes_all_active_profiles)`.
 /// Only passing candidates are eligible. The best one has the lowest latency
 /// (profile id breaks ties). A current profile that fails the filters is
-/// replaced immediately, ignoring cooldown. Enabling the feature and
+/// replaced immediately, ignoring cooldown, only when a passing candidate
+/// exists; with none the live connection is kept. Enabling the feature and
 /// persisting the switch time are the caller's responsibility.
 pub fn decide_reconnect(
     current_id: Option<&str>,
@@ -49,7 +49,7 @@ pub fn decide_reconnect(
             Some((profile_id, _, _)) => ReconnectDecision::Switch {
                 profile_id: profile_id.clone(),
             },
-            None => ReconnectDecision::Disconnect,
+            None => ReconnectDecision::None,
         };
     }
 
@@ -166,12 +166,12 @@ mod tests {
     }
 
     #[test]
-    fn no_candidate_passing_disconnects() {
+    fn no_passing_candidate_keeps_current_connection() {
         let now = utc(NOW);
         let entries = candidates(&[("current", 10, false)]);
         assert_eq!(
             decide_reconnect(Some("current"), &entries, &settings(60), now, None),
-            ReconnectDecision::Disconnect
+            ReconnectDecision::None
         );
     }
 

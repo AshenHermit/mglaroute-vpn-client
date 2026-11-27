@@ -89,6 +89,7 @@ describe("AppShell", () => {
         probeTotal: 0,
         lastProbeFinishedAt: null,
         selectedProfileId: null,
+        clientVersion: null,
       });
       useUiStore.setState({ favorites: [], filter: { kind: "all" } });
       useConnectionStore.getState().setState(disconnected);
@@ -97,6 +98,7 @@ describe("AppShell", () => {
       if (command === "subscription_list") return subscriptions as never;
       if (command === "profile_list") return profiles as never;
       if (command === "anti_dpi_status") return { status: "unsupported" } as never;
+      if (command === "app_version") return "0.2.2" as never;
       if (command === "connection_status") return disconnected as never;
       return undefined as never;
     });
@@ -181,6 +183,37 @@ describe("AppShell", () => {
     expect(screen.getByTestId("server-count").textContent).toBe("3");
     expect(screen.queryByText(/secret\.example/)).toBeNull();
     expect(screen.queryByText(/vless:\/\//)).toBeNull();
+  });
+
+  it("renders the fetched client version in the rail outside the h1", async () => {
+    render(<AppShell />);
+
+    expect(await screen.findByText("v0.2.2")).toBeTruthy();
+    expect(mockedInvoke).toHaveBeenCalledWith("app_version", expect.anything());
+    const version = screen.getByTestId("client-version");
+    expect(version.closest("h1")).toBeNull();
+  });
+
+  it("shows no notice and no version when app_version fails, without native text", async () => {
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "app_version") {
+        throw new Error("native failure echoing https://secret.example");
+      }
+      if (command === "subscription_list") return subscriptions as never;
+      if (command === "profile_list") return profiles as never;
+      if (command === "anti_dpi_status") return { status: "unsupported" } as never;
+      if (command === "connection_status") return disconnected as never;
+      return undefined as never;
+    });
+
+    render(<AppShell />);
+
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith("app_version", expect.anything()),
+    );
+    expect(useAppStore.getState().notice).toBeNull();
+    expect(screen.queryByText(/^v\d/)).toBeNull();
+    expect(screen.queryByText(/native failure|secret\.example/)).toBeNull();
   });
 
   it("shows the real anti-DPI status fetched once", async () => {

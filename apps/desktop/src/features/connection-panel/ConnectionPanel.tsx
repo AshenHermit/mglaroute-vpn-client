@@ -138,6 +138,7 @@ export function ConnectionPanel() {
       : "Connect";
   const activeId = state.profileId ?? selectedProfileId;
   const activeProfile = profiles.find((profile) => profile.id === activeId) ?? null;
+  const connectedAbsentServer = connected && activeProfile === null && activeId !== null;
   const activeState = connected ? "connected" : activeProfile ? "active" : "none";
 
   return (
@@ -179,12 +180,18 @@ export function ConnectionPanel() {
               Active server
             </p>
             <p className="mt-1 break-words text-base font-semibold text-foreground">
-              {activeProfile?.remarks ?? activeProfile?.address ?? "No active server"}
+              {connectedAbsentServer
+                ? "Connected server (not in list)"
+                : (activeProfile?.remarks ?? activeProfile?.address ?? "No active server")}
             </p>
-            {activeProfile !== null && (
-              <p className="break-all text-xs text-muted-foreground">
-                {activeProfile.address}
-              </p>
+            {connectedAbsentServer ? (
+              <p className="break-all text-xs text-muted-foreground">{activeId}</p>
+            ) : (
+              activeProfile !== null && (
+                <p className="break-all text-xs text-muted-foreground">
+                  {activeProfile.address}
+                </p>
+              )
             )}
             <dl className="mt-4 grid gap-2 text-sm">
               <Fact label="Protocol" value={activeProfile?.protocol ?? "—"} />
