@@ -172,14 +172,15 @@ pub fn binary_path_from(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::ffi::{OsStr, OsString};
     use std::net::{SocketAddr, TcpListener};
     use std::path::{Path, PathBuf};
     use std::sync::{Mutex, MutexGuard};
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime};
     use std::{env, process::Command};
 
-    use crate::core::job::{reap_orphans_with, JobHandle};
+    use crate::core::job::{reap_orphans_with, reap_orphans_with_liveness, JobHandle};
     use crate::core::snapshot::snapshot_for;
     use crate::storage::models::Profile;
 
@@ -352,6 +353,100 @@ mod tests {
         assert_eq!(killed.get(), 1);
         assert!(!pid_path.exists(), "verified pid sidecar must be removed");
         assert!(!config_path.exists(), "verified config must be removed");
+    }
+
+    #[test]
+    fn reaping_dead_pid_cleans_sidecars_without_kill() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_path = dir.path().join("mglaroute-probe-42-1.pid");
+        let config_path = dir.path().join("mglaroute-probe-42-1.json");
+        std::fs::write(&pid_path, "4242").unwrap();
+        std::fs::write(&config_path, "{}").unwrap();
+        let killed = Cell::new(0);
+        let count = reap_orphans_with_liveness(
+            dir.path(),
+            |_pid| false,
+            |_pid, _config| panic!("dead PID must not be verified"),
+            |_pid| killed.set(killed.get() + 1),
+            None,
+        )
+        .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(killed.get(), 0);
+        assert!(!pid_path.exists());
+        assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn reaping_deduplicates_pid_and_cleans_all_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("mglaroute-probe-42-1.pid");
+        let second = dir.path().join("mglaroute-probe-42-2.pid");
+        std::fs::write(&first, "4242").unwrap();
+        std::fs::write(&second, "4242").unwrap();
+        let verified = Cell::new(0);
+        let killed = Cell::new(0);
+        let count = reap_orphans_with_liveness(
+            dir.path(),
+            |_pid| true,
+            |_pid, _config| {
+                verified.set(verified.get() + 1);
+                true
+            },
+            |_pid| killed.set(killed.get() + 1),
+            None,
+        )
+        .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(verified.get(), 1);
+        assert_eq!(killed.get(), 1);
+        assert!(!first.exists());
+        assert!(!second.exists());
+    }
+
+    #[test]
+    fn reaping_ignores_sidecars_newer_than_cutoff() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_path = dir.path().join("mglaroute-probe-42-1.pid");
+        std::fs::write(&pid_path, "4242").unwrap();
+        let cutoff = SystemTime::now() - Duration::from_secs(3600);
+        let verified = Cell::new(0);
+        let count = reap_orphans_with_liveness(
+            dir.path(),
+            |_pid| true,
+            |_pid, _config| {
+                verified.set(verified.get() + 1);
+                true
+            },
+            |_pid| panic!("fresh sidecar must not be killed"),
+            Some(cutoff),
+        )
+        .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(verified.get(), 0);
+        assert!(pid_path.exists());
+    }
+
+    #[test]
+    fn reaping_empty_dir_calls_no_verifier() {
+        let dir = tempfile::tempdir().unwrap();
+        let calls = Cell::new(0);
+        let count = reap_orphans_with_liveness(
+            dir.path(),
+            |_pid| {
+                calls.set(calls.get() + 1);
+                true
+            },
+            |_pid, _config| {
+                calls.set(calls.get() + 1);
+                true
+            },
+            |_pid| panic!("no processes to kill"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(calls.get(), 0);
     }
 
     #[cfg(windows)]
