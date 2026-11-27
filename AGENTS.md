@@ -120,8 +120,12 @@ docs/superpowers/specs/   design docs
   `docs/e2e-checklist.md`.
 - `pnpm installer:build` needs network + signing env
   (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`); operator
-  smoke test only, not a CI-unit step. `pnpm vitest run scripts/release-config.test.mjs`
-  checks the release wiring (scripts, CLI dep, workflow inputs, updater config).
+  smoke test only, not a CI-unit step. `pnpm version:set <version>` bumps the
+  root/desktop packages, `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`
+  together; the release tag must equal `v<version>` from `tauri.conf.json`.
+  `pnpm vitest run scripts/release-config.test.mjs scripts/set-version.test.mjs`
+  checks the release wiring (scripts, CLI dep, workflow inputs, updater config,
+  version sync).
 
 ## Contracts
 
@@ -130,8 +134,8 @@ docs/superpowers/specs/   design docs
   `disconnect_impl` then `app.exit(0)` behind an idempotent shutdown gate.
   No new Tauri commands — WebView state is not on the exit path.
 - Update pipeline: `bundle.createUpdaterArtifacts`, inline
-  `plugins.updater.pubkey` (`PUBLIC_KEY_PLACEHOLDER` until the operator supplies
-  the generated public key), endpoint
+  `plugins.updater.pubkey` (generated public key committed; private key only in
+  GitHub Secrets), endpoint
   `https://github.com/AshenHermit/mglaroute-vpn-client/releases/latest/download/latest.json`,
   Windows `installMode: passive`. Tag `v<version>` must match `tauri.conf.json`.
   Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`;
