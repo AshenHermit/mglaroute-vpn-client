@@ -33,6 +33,15 @@ binaries, then `tauri build --bundles nsis`), tag-triggered
 Open release page actions. Design (status `accepted`):
 `docs/superpowers/specs/2026-11-26-release-updater-design.md`.
 
+Subscriptions panel refactor implemented: add/edit happen in one modal with
+`URL` and `Mglaroute` tabs; the latter builds a `format=subscription` feed link
+for `https://api.mglaroute.ashen-hermit.space/api/feed` using enabled services
+from the public `GET /api/feed/services` endpoint (Rust `feed_services`, no
+WebView fetch). Editing a matching feed URL prefills the form. Subscriptions
+render as separate cards. URL edits do not auto-refetch. Design (status
+`accepted`): `docs/superpowers/specs/2026-11-28-subscription-manager-feed-design.md`.
+Plan: `docs/superpowers/plans/2026-11-28-subscription-manager-feed.md`.
+
 ## Stack (fixed by operator)
 
 - pnpm workspace + Nx. Node 20+.
