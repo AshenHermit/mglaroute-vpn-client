@@ -15,7 +15,7 @@ use tokio::sync::{watch, Mutex};
 use tokio::time::MissedTickBehavior;
 
 use crate::anti_dpi::AntiDpiStatus;
-use crate::core::job::{reap_orphans, JobHandle};
+use crate::core::job::JobHandle;
 use crate::core::snapshot::ConfigSnapshot;
 use crate::core::supervisor::{binary_path, ChildGuard, SupervisorError};
 use crate::platform::proxy::{load_previous, PreviousProxy, ProxyBackend};
@@ -307,18 +307,17 @@ impl AppState {
     }
 }
 
-/// Open storage, seed defaults, reap stale probe cores, then restore a proxy
-/// captured before a prior process exit. No auto-connect: the operator decides
-/// when to reconnect.
+/// Open storage, seed defaults, then restore a proxy captured before a prior
+/// process exit. Stale probe-core cleanup runs in a background task: probe
+/// cores bind their own loopback proxy and never touch the system proxy, so
+/// cleanup ordering relative to proxy restore is irrelevant. No auto-connect:
+/// the operator decides when to reconnect.
 pub fn bootstrap(dir: &Path) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;
     let mut conn = Connection::open(dir.join("client.db"))?;
     migrate(&conn)?;
     ensure_defaults_on_empty(&mut conn)?;
 
-    // Reap before restoring the proxy: verification rejects recycled PIDs and
-    // never reads or logs config contents.
-    reap_orphans(&std::env::temp_dir())?;
     let job = Arc::new(JobHandle::create()?);
 
     let proxy_path = dir.join("proxy_previous.json");

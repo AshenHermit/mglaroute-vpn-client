@@ -14,9 +14,20 @@ vi.mock("../../stores/app.store", () => ({
   useAppStore: (selector: (store: unknown) => unknown) => selector(mocks),
 }));
 
-import { UPDATE_CHECK_INTERVAL_MS, useUpdateCheck } from "./use-update-check";
+import {
+  UPDATE_CHECK_INTERVAL_MS,
+  UPDATE_CHECK_START_DELAY_MS,
+  useUpdateCheck,
+} from "./use-update-check";
 
 const mockedInvoke = vi.mocked(invoke);
+
+const startChecks = async () => {
+  await act(async () => {
+    vi.advanceTimersByTime(UPDATE_CHECK_START_DELAY_MS);
+    await Promise.resolve();
+  });
+};
 
 const info: UpdateInfo = {
   version: "0.2.0",
@@ -39,10 +50,25 @@ describe("useUpdateCheck", () => {
     vi.useRealTimers();
   });
 
+  it("defers the first update check until after startup", async () => {
+    mockedInvoke.mockResolvedValue(info);
+
+    renderHook(() => useUpdateCheck());
+
+    expect(mockedInvoke).toHaveBeenCalledTimes(0);
+
+    await startChecks();
+
+    expect(mockedInvoke).toHaveBeenCalledTimes(1);
+    const [command] = mockedInvoke.mock.calls[0]!;
+    expect(command).toBe("update_check");
+  });
+
   it("checks once on mount, stores the update and announces a new version", async () => {
     mockedInvoke.mockResolvedValue(info);
 
     renderHook(() => useUpdateCheck());
+    await startChecks();
 
     expect(mockedInvoke).toHaveBeenCalledTimes(1);
     const [command, schema] = mockedInvoke.mock.calls[0]!;
@@ -63,6 +89,7 @@ describe("useUpdateCheck", () => {
     mockedInvoke.mockResolvedValue(info);
 
     renderHook(() => useUpdateCheck());
+    await startChecks();
     await act(async () => {
       await Promise.resolve();
     });
@@ -82,6 +109,7 @@ describe("useUpdateCheck", () => {
     mockedInvoke.mockResolvedValueOnce(info).mockResolvedValueOnce(null);
 
     renderHook(() => useUpdateCheck());
+    await startChecks();
     await act(async () => {
       await Promise.resolve();
     });
@@ -105,6 +133,7 @@ describe("useUpdateCheck", () => {
     mockedInvoke.mockRejectedValueOnce(new Error("network down"));
 
     renderHook(() => useUpdateCheck());
+    await startChecks();
     await act(async () => {
       await Promise.resolve();
     });
@@ -127,6 +156,7 @@ describe("useUpdateCheck", () => {
     mockedInvoke.mockResolvedValueOnce(info).mockResolvedValueOnce({ ...info, version: "0.3.0" });
 
     renderHook(() => useUpdateCheck());
+    await startChecks();
     await act(async () => {
       await Promise.resolve();
     });
@@ -145,6 +175,7 @@ describe("useUpdateCheck", () => {
     mockedInvoke.mockResolvedValue(null);
 
     renderHook(() => useUpdateCheck());
+    await startChecks();
     await act(async () => {
       await Promise.resolve();
     });

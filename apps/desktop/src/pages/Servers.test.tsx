@@ -73,6 +73,14 @@ describe("Servers probe controls", () => {
     });
   });
 
+  it("does not fetch profiles on mount", () => {
+    render(<Servers />);
+
+    expect(
+      mockedInvoke.mock.calls.filter(([command]) => command === "profile_list"),
+    ).toHaveLength(0);
+  });
+
   it("maps probe_busy from probe_run to the in-progress notice", async () => {
     render(<Servers />);
     fireEvent.click(screen.getByRole("button", { name: "Run test" }));
@@ -250,12 +258,8 @@ describe("Servers probe controls", () => {
       address: "edge.example.net",
       sortIndex: 2,
     };
-    mockedInvoke.mockImplementation(async (command) => {
-      if (command === "profile_list") return [server, otherServer, third] as never;
-      return undefined as never;
-    });
+    useAppStore.setState({ profiles: [server, otherServer, third] });
     render(<Servers />);
-    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(3));
 
     const search = screen.getByRole("searchbox", { name: "Search servers" });
     fireEvent.change(search, { target: { value: "edge.example" } });

@@ -172,6 +172,9 @@ describe("AppShell", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("subscription_list", expect.anything()),
     );
     expect(mockedInvoke).toHaveBeenCalledWith("profile_list", expect.anything());
+    expect(
+      mockedInvoke.mock.calls.filter(([command]) => command === "profile_list"),
+    ).toHaveLength(1);
     await waitFor(() =>
       expect(screen.getByTestId("subscription-count").textContent).toBe("2"),
     );
@@ -207,6 +210,25 @@ describe("AppShell", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("anti-dpi-status").textContent).toContain("unsupported"),
+    );
+    expect(screen.queryByText(/secret\.example/)).toBeNull();
+  });
+
+  it("reports a safe notice when profile_list fails, without echoing native text", async () => {
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "subscription_list") return subscriptions as never;
+      if (command === "profile_list") {
+        throw new Error("native failure echoing https://secret.example");
+      }
+      if (command === "anti_dpi_status") return { status: "unsupported" } as never;
+      if (command === "connection_status") return disconnected as never;
+      return undefined as never;
+    });
+
+    render(<AppShell />);
+
+    await waitFor(() =>
+      expect(useAppStore.getState().notice).toBe("Could not load servers"),
     );
     expect(screen.queryByText(/secret\.example/)).toBeNull();
   });

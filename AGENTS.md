@@ -110,6 +110,8 @@ docs/superpowers/specs/   design docs
   skips the sidecar check without a real binary. Append `-- --test-threads=1`:
   the process-global `EVENT_SINK` in `state.rs` makes a parallel run flaky
   (`connect_port_in_use_returns_distinct_error_without_faulted_event`).
+  With `MGLAROUTE_STARTUP_TRACE=1` the release exe prints fixed startup phase
+  timings to stderr; no subscription data is printed.
 - `pnpm binaries:fetch` / `pnpm binaries:verify`: fetch/verify staged xray with
   `.dgst` sha256. `XRAY_BINARY_PATH` overrides the binary for dev. No real binary
   in this checkout — `binaries:verify` fails with `ENOENT ... xray.exe.sha256`;

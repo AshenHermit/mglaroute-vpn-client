@@ -2,6 +2,7 @@ import {
   EVENTS,
   ProbeResultSchema,
   ProbeServerEventSchema,
+  ProfileSchema,
   SubscriptionSchema,
   UpdateProgressEventSchema,
   type ProbeResult,
@@ -160,6 +161,7 @@ export function useBackendEvents(): void {
   const setProbeCancelled = useAppStore((store) => store.setProbeCancelled);
   const setProbeFinished = useAppStore((store) => store.setProbeFinished);
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
+  const setProfiles = useAppStore((store) => store.setProfiles);
   const setNotice = useAppStore((store) => store.setNotice);
   const setUpdateProgress = useAppStore((store) => store.setUpdateProgress);
 
@@ -230,13 +232,21 @@ export function useBackendEvents(): void {
         setNotice(
           `Refresh complete: ${result.added} added, ${result.updated} updated, ${result.absent} absent, ${result.badLines} bad lines`,
         );
-        // Re-fetch so status badges (e.g. error) update without a page remount.
+        // Re-fetch so status badges (e.g. error) and newly imported servers
+        // appear without a page remount or a full restart.
         void invoke("subscription_list", SubscriptionSchema.array())
           .then((rows) => {
             if (active) setSubscriptions(rows);
           })
           .catch(() => {
             // Never log native error text: it can echo subscription URLs.
+          });
+        void invoke("profile_list", ProfileSchema.array())
+          .then((rows) => {
+            if (active) setProfiles(rows);
+          })
+          .catch(() => {
+            // Never log native error text: it can echo link data.
           });
       }
     });
@@ -251,6 +261,7 @@ export function useBackendEvents(): void {
     setProbeCancelled,
     setProbeFinished,
     setSubscriptions,
+    setProfiles,
     setNotice,
     setUpdateProgress,
   ]);
