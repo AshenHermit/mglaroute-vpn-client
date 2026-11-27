@@ -11,6 +11,8 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::process::Child;
 
+use crate::core::supervisor::apply_hidden_console;
+
 /// Owns a Windows Job Object. Dropping the last handle terminates every
 /// process assigned to it, including grandchildren spawned by the core.
 pub struct JobHandle {
@@ -167,9 +169,9 @@ pub fn reap_orphans_with(
 /// logged.
 pub fn reap_orphans(temp_dir: &Path) -> io::Result<usize> {
     reap_orphans_with(temp_dir, verify_probe_process, |pid| {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        let mut command = std::process::Command::new("taskkill");
+        command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        let _ = apply_hidden_console(&mut command).status();
     })
 }
 
@@ -177,9 +179,9 @@ pub fn reap_orphans(temp_dir: &Path) -> io::Result<usize> {
 fn verify_probe_process(pid: u32, config_path: &Path) -> bool {
     use std::process::Command;
 
-    let listing = Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-        .output();
+    let mut listing_command = Command::new("tasklist");
+    listing_command.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
+    let listing = apply_hidden_console(&mut listing_command).output();
     let Ok(listing) = listing else {
         return false;
     };
@@ -198,10 +200,9 @@ fn verify_probe_process(pid: u32, config_path: &Path) -> bool {
     };
     // PID is numeric; the config name is compared, never interpolated.
     let script = format!("(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine");
-    let Ok(cmdline) = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-    else {
+    let mut cmdline_command = Command::new("powershell");
+    cmdline_command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+    let Ok(cmdline) = apply_hidden_console(&mut cmdline_command).output() else {
         return false;
     };
     if !cmdline.status.success() {

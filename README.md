@@ -80,10 +80,13 @@ real binary.
 `pnpm installer:build` produces a signed NSIS installer locally. Prerequisites:
 network access for `binaries:fetch` (or an already staged checkout), bundled
 binaries that pass `binaries:verify`, and the Tauri signing env
-`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The command
-runs `binaries:fetch`, `binaries:verify`, then
-`pnpm --filter @mglaroute/desktop exec tauri build --bundles nsis`. This is an
-operator smoke test, not a CI-unit step.
+`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Copy
+`.env.example` to `.env` (gitignored) and fill in the signing values; the script
+loads that file with `dotenv-cli` and passes the resulting environment to
+`binaries:fetch`, `binaries:verify` and
+`pnpm --filter @mglaroute/desktop exec tauri build --bundles nsis`. Values already
+present in the shell environment are not overwritten. This is an operator smoke
+test, not a CI-unit step.
 
 To publish: generate the keypair with
 `cargo tauri signer generate -w ~/.tauri/mglaroute.key`, commit the public key to

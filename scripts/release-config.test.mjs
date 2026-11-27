@@ -23,10 +23,22 @@ function contains(text, needle) {
 describe("release config wiring", () => {
   it("root installer:build script fetches, verifies and builds an NSIS bundle", () => {
     assert.match(rootPackage, /"installer:build"\s*:/);
+    const outer = rootPackage.match(/"installer:build"\s*:\s*"([^"]+)"/)?.[1] ?? "";
+    const inner = outer.includes("installer:build:inner")
+      ? rootPackage.match(/"installer:build:inner"\s*:\s*"([^"]+)"/)?.[1] ?? ""
+      : outer;
+    contains(inner, "binaries:fetch");
+    contains(inner, "binaries:verify");
+    contains(inner, "tauri build --bundles nsis");
+  });
+
+  it("root installer:build loads the gitignored .env via dotenv-cli", () => {
     const script = rootPackage.match(/"installer:build"\s*:\s*"([^"]+)"/)?.[1] ?? "";
-    contains(script, "binaries:fetch");
-    contains(script, "binaries:verify");
-    contains(script, "tauri build --bundles nsis");
+    contains(script, "dotenv -e .env --");
+    contains(rootPackage, '"dotenv-cli"');
+    const envExample = read(".env.example");
+    contains(envExample, "TAURI_SIGNING_PRIVATE_KEY");
+    contains(envExample, "TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
   });
 
   it("root version:set script synchronizes every release version file", () => {

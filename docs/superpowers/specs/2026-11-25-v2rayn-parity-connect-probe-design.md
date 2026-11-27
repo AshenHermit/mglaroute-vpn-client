@@ -167,6 +167,12 @@ guard не удерживается через `await` другой област
   `ChildGuard::spawn` и `XrayLauncher` назначают job для **каждого** ядра — и connection,
   и probe. Закрытие job'а при выходе убивает всех потомков.
 - `windows-sys` получить features `Win32_System_JobObjects`, `Win32_System_Threading`.
+- Все дочерние процессы GUI-приложения создаются с `CREATE_NO_WINDOW`
+  (`0x08000000`) через `core::supervisor::apply_hidden_console`: ядра xray и
+  хелперы реапера `taskkill` / `tasklist` / `powershell`. Без флага Windows
+  выделяет новую видимую консоль каждому консольному ребёнку — при
+  `test_concurrency = 10` это даёт пачку окон на каждый цикл проверок.
+  stdout/stderr ядра остаются `Stdio::null()`.
 - pid-сайдкар рядом с каждым temp config. При старте `bootstrap()` сканирует
   `mglaroute-probe-*.pid` и `xray-*.pid`, проверяет, что PID всё ещё `xray.exe`
   (`QueryFullProcessImageNameW`) и в command line встречается путь конфига, затем

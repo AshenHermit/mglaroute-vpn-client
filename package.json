@@ -12,11 +12,13 @@
     "test": "nx run-many --target=test && vitest run scripts",
     "binaries:fetch": "node scripts/fetch-xray.mjs && node scripts/stage-antiddpi.mjs",
     "binaries:verify": "node scripts/fetch-xray.mjs --verify",
-    "installer:build": "pnpm binaries:fetch && pnpm binaries:verify && pnpm --filter @mglaroute/desktop exec tauri build --bundles nsis",
+    "installer:build": "dotenv -e .env -- pnpm run installer:build:inner",
+    "installer:build:inner": "pnpm binaries:fetch && pnpm binaries:verify && pnpm --filter @mglaroute/desktop exec tauri build --bundles nsis",
     "version:set": "node scripts/set-version.mjs"
   },
   "devDependencies": {
     "adm-zip": "^0.5.18",
+    "dotenv-cli": "^11.1.0",
     "nx": "^21.6.0",
     "typescript": "^5.7.3",
     "vitest": "^2.1.9"

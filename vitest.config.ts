@@ -5,6 +5,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["**/*.test.{ts,tsx,mjs}"],
-    exclude: ["**/node_modules/**"],
+    exclude: ["**/node_modules/**", "**/.worktrees/**"],
   },
 });
