@@ -6,11 +6,11 @@ import type {
 } from "react";
 
 export function Table({ className = "", ...props }: TableHTMLAttributes<HTMLTableElement>) {
-  return <table className={`w-full border-collapse text-sm ${className}`} {...props} />;
+  return <table className={`w-full border-collapse text-sm text-foreground ${className}`} {...props} />;
 }
 
 export function TableHead({ className = "", ...props }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={`bg-slate-100 text-left ${className}`} {...props} />;
+  return <thead className={`bg-muted text-left text-muted-foreground ${className}`} {...props} />;
 }
 
 export function TableBody({ className = "", ...props }: HTMLAttributes<HTMLTableSectionElement>) {
@@ -18,7 +18,7 @@ export function TableBody({ className = "", ...props }: HTMLAttributes<HTMLTable
 }
 
 export function TableRow({ className = "", ...props }: HTMLAttributes<HTMLTableRowElement>) {
-  return <tr className={`border-b border-slate-200 ${className}`} {...props} />;
+  return <tr className={`border-b border-border ${className}`} {...props} />;
 }
 
 export function TableHeaderCell({

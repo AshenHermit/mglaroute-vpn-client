@@ -1,15 +1,26 @@
-import * as DialogPrimitive from "@radix-ui/react-dialog";
+import * as DialogPrimitive from "@animate-ui/react/primitives/radix-ui/dialog";
 import type { ReactNode } from "react";
+import { cn } from "../../lib/utils";
 
 export type DialogProps = {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /** Overrides the default centered layout, e.g. for a side sheet. */
+  contentClassName?: string;
+  closeLabel?: string;
 };
 
-/** Local dialog built on the Radix Dialog primitive; no secrets in default UI. */
-export function Dialog({ open, onClose, title, children }: DialogProps) {
+/** Animated dialog built on the Animate UI Radix Dialog primitive. */
+export function Dialog({
+  open,
+  onClose,
+  title,
+  children,
+  contentClassName,
+  closeLabel = "Close dialog",
+}: DialogProps) {
   return (
     <DialogPrimitive.Root
       open={open}
@@ -18,18 +29,26 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
       }}
     >
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-slate-900/50" />
+        <DialogPrimitive.Overlay
+          data-slot="dialog-overlay"
+          className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+        />
         <DialogPrimitive.Content
+          data-slot="dialog-content"
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-xl focus:outline-none"
+          className={cn(
+            "fixed z-50 shadow-xl focus:outline-hidden",
+            contentClassName ??
+              "inset-0 m-auto h-fit w-[calc(100%-2rem)] max-w-lg rounded-xl border border-border bg-card p-6 text-foreground",
+          )}
         >
           <div className="mb-4 flex items-center justify-between gap-4">
-            <DialogPrimitive.Title className="text-lg font-semibold">
+            <DialogPrimitive.Title className="text-lg font-semibold text-foreground">
               {title}
             </DialogPrimitive.Title>
             <DialogPrimitive.Close
-              aria-label="Close dialog"
-              className="rounded px-2 text-slate-500 hover:bg-slate-100"
+              aria-label={closeLabel}
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md px-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               ×
             </DialogPrimitive.Close>

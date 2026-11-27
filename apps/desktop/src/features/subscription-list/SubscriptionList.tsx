@@ -13,9 +13,9 @@ import { commandErrorCode, invoke } from "../../lib/invoke";
 import { useAppStore } from "../../stores/app.store";
 
 const badgeStyles: Record<Subscription["status"], string> = {
-  active: "bg-emerald-100 text-emerald-700",
-  inactive: "bg-slate-100 text-slate-600",
-  error: "bg-red-100 text-red-700",
+  active: "bg-primary/15 text-primary",
+  inactive: "bg-muted text-muted-foreground",
+  error: "bg-destructive/15 text-destructive",
 };
 
 export function SubscriptionList() {
@@ -131,35 +131,47 @@ export function SubscriptionList() {
         <CardTitle>Subscriptions</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_16rem_auto] sm:items-end">
-          <div>
-            <label htmlFor="subscription-url" className="mb-1 block text-xs text-slate-600">
-              Subscription URL
-            </label>
-            <Input
-              id="subscription-url"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://example.com/subscription"
-            />
+        <div className="@container mb-4">
+          <div className="grid gap-3 @lg:grid-cols-[minmax(0,1fr)_10rem_auto] @lg:items-end">
+            <div className="min-w-0">
+              <label
+                htmlFor="subscription-url"
+                className="mb-1 block text-xs text-muted-foreground"
+              >
+                Subscription URL
+              </label>
+              <Input
+                id="subscription-url"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://example.com/subscription"
+                className="min-w-0"
+              />
+            </div>
+            <div className="min-w-0">
+              <label
+                htmlFor="subscription-name"
+                className="mb-1 block text-xs text-muted-foreground"
+              >
+                Name (optional)
+              </label>
+              <Input
+                id="subscription-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="min-w-0"
+              />
+            </div>
+            <Button className="shrink-0" onClick={() => void add()}>
+              Add subscription
+            </Button>
           </div>
-          <div>
-            <label htmlFor="subscription-name" className="mb-1 block text-xs text-slate-600">
-              Name (optional)
-            </label>
-            <Input
-              id="subscription-name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </div>
-          <Button onClick={() => void add()}>Add subscription</Button>
         </div>
 
         {subscriptions.length === 0 ? (
-          <p className="text-sm text-slate-500">No subscriptions yet.</p>
+          <p className="text-sm text-muted-foreground">No subscriptions yet.</p>
         ) : (
-          <ul className="divide-y divide-slate-200">
+          <ul className="divide-y divide-border">
             {subscriptions.map((subscription) => (
               <li key={subscription.id} className="py-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -181,20 +193,20 @@ export function SubscriptionList() {
                     </Button>
                   </div>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
+                <div className="@container mt-2 flex flex-wrap items-end gap-3">
                   <Switch
                     checked={subscription.enabled}
                     label={`Enabled for ${subscription.name}`}
                     onCheckedChange={(checked) => void setEnabled(subscription, checked)}
                   />
-                  <span className="text-xs text-slate-600">
+                  <span className="min-w-0 break-words text-xs text-muted-foreground">
                     Refetch interval for {subscription.name} (minutes)
                   </span>
                   <Input
                     aria-label={`Refetch interval for ${subscription.name} (minutes)`}
                     type="number"
                     min={0}
-                    className="w-20"
+                    className="w-20 shrink-0"
                     value={intervals[subscription.id] ?? String(subscription.autoRefetchMinutes)}
                     onChange={(event) =>
                       setIntervals({ ...intervals, [subscription.id]: event.target.value })

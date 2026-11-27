@@ -89,43 +89,46 @@ export function ServiceProfileEditor() {
         <CardTitle>Service profiles</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="mb-4 grid gap-3 sm:grid-cols-2">
-          <div>
-            <label htmlFor="service-profile-name" className="mb-1 block text-xs text-slate-600">
-              Profile name
-            </label>
-            <Input
-              id="service-profile-name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Critical services"
-            />
-          </div>
-          <div>
-            <label htmlFor="service-profile-urls" className="mb-1 block text-xs text-slate-600">
-              Test URLs (one per line)
-            </label>
-            <textarea
-              id="service-profile-urls"
-              value={urlsText}
-              onChange={(event) => setUrlsText(event.target.value)}
-              rows={3}
-              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-sky-600"
-              placeholder="https://example.com/health"
-            />
+        <div className="@container mb-4">
+          <div className="grid gap-3 @lg:grid-cols-2">
+            <div className="min-w-0">
+              <label htmlFor="service-profile-name" className="mb-1 block text-xs text-muted-foreground">
+                Profile name
+              </label>
+              <Input
+                id="service-profile-name"
+                className="min-w-0"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Critical services"
+              />
+            </div>
+            <div className="min-w-0">
+              <label htmlFor="service-profile-urls" className="mb-1 block text-xs text-muted-foreground">
+                Test URLs (one per line)
+              </label>
+              <textarea
+                id="service-profile-urls"
+                value={urlsText}
+                onChange={(event) => setUrlsText(event.target.value)}
+                rows={3}
+                className="w-full min-h-11 min-w-0 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-hidden focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                placeholder="https://example.com/health"
+              />
+            </div>
           </div>
         </div>
-        <Button onClick={() => void create()}>Add profile</Button>
+        <Button className="shrink-0" onClick={() => void create()}>Add profile</Button>
         {error && (
-          <p role="alert" className="mt-3 text-sm text-red-700">
+          <p role="alert" className="mt-3 text-sm text-destructive">
             {error}
           </p>
         )}
 
         {serviceProfiles.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-500">No service profiles yet.</p>
+          <p className="mt-4 text-sm text-muted-foreground">No service profiles yet.</p>
         ) : (
-          <ul className="mt-4 divide-y divide-slate-200">
+          <ul className="mt-4 divide-y divide-border">
             {serviceProfiles.map((profile) => (
               <li
                 key={profile.id}
@@ -133,7 +136,7 @@ export function ServiceProfileEditor() {
               >
                 <div>
                   <span className="font-medium">{profile.name}</span>
-                  <span className="ml-2 text-xs text-slate-500">
+                  <span className="ml-2 text-xs text-muted-foreground">
                     {profile.testUrls.length} URL(s)
                   </span>
                 </div>

@@ -64,4 +64,13 @@ describe("ServiceProfileEditor", () => {
       ),
     );
   });
+
+  it("uses container queries for the narrow two-column form", async () => {
+    render(<ServiceProfileEditor />);
+    const input = await screen.findByLabelText(/profile name/i);
+    const grid = input.closest("div")?.parentElement;
+    expect(grid?.className).toContain("@lg:grid-cols-2");
+    expect(grid?.className).not.toContain("sm:grid-cols-2");
+    expect(grid?.parentElement?.className).toContain("@container");
+  });
 });

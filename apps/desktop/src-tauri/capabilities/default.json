@@ -3,5 +3,5 @@
   "identifier": "event-listener",
   "description": "Allow the frontend to listen for backend probe and connection events.",
   "windows": ["*"],
-  "permissions": ["core:event:default"]
+  "permissions": ["core:event:default", "updater:default", "shell:allow-open"]
 }

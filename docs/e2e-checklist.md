@@ -15,9 +15,13 @@ registry. Run them in this order on Windows desktop.
 - Two test URLs that return 2xx through the proxy and at least one that does not.
 - Record proxy state before step 1: `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`,
   values `ProxyEnable`, `ProxyServer`, `ProxyOverride`, `AutoConfigURL`.
+- For steps 16–17: a published GitHub release newer than the running version with
+  a signed NSIS setup, `.sig` and `latest.json`, and `plugins.updater.pubkey`
+  matching the signing key. The release-page fallback needs only the releases URL.
 
 Legend: **binary** = needs the real bundled xray binary; **Windows** = needs a real
-Windows registry run; **network** = needs live subscription/test URLs. All steps are manual.
+Windows registry run; **network** = needs live subscription/test URLs; **update** =
+needs a published signed release with a newer version. All steps are manual.
 
 ## Steps
 
@@ -142,6 +146,40 @@ Windows registry run; **network** = needs live subscription/test URLs. All steps
     "Subscription not found"; `storage` → "Local storage error"; any other code →
     "Could not refresh subscription". On connect, `connection_busy` → "Connection
     operation in progress" instead of a generic failure.
+
+15. **Tray lifecycle → window hides, reopens, and Exit cleans up once.** (binary, Windows)
+    From a `Connected` state (step 4) click the window's close button, then
+    left-click the tray icon, then right-click it and choose **Exit**.
+    Expected: the close button hides the window but the process stays alive —
+    the tray icon is still present, the connection card state is unchanged, the
+    registry proxy is still set, and the working xray core is still running.
+    Left-click restores and focuses the `main` window (same connection state).
+    Right-click shows a menu with `Open` and `Exit` only. Choosing `Exit`
+    restores the recorded proxy values, removes `proxy_previous.json`, and
+    leaves no `xray.exe` process or `%TEMP%\mglaroute-probe-*` sidecars; the
+    process then ends. Repeat the connect → close → Exit sequence, and try a
+    rapid double-click on `Exit`: no second cleanup runs (no error dialog, no
+    duplicate proxy restore, no process left behind).
+
+16. **Update notice → Install update updates and restarts cleanly.** (update, Windows)
+    With a newer signed release published, launch the app (or wait for the 6 h
+    check) and open **Settings → Updates**.
+    Expected: a toast announces the new version; the panel shows the available
+    version and notes. Click **Install update**: progress advances through
+    `downloading` → `installing`, and the app closes before the passive NSIS
+    install so the new version can run. Before install, the recorded proxy values
+    are restored, `proxy_previous.json` is removed, no `xray.exe` remains and no
+    `%TEMP%\mglaroute-probe-*` sidecars are left. A second click while installing
+    is a no-op (`update_busy`). The final `done` progress line may never arrive
+    because the Windows updater can exit first — do not read that as failure.
+
+17. **No in-app install → release page opens.** (update, UI)
+    Run a build where `canInstallInApp` is false (mobile seam; Windows currently
+    always true), so **Updates** shows **Open release page**.
+    Expected: clicking it opens the GitHub releases page for `v<version>` in the
+    system browser via Rust `shell::open`, not the WebView. No download/install
+    runs and proxy/core state is unchanged; a failed install leaves the button
+    clickable again.
 
 ## Not covered by this checklist
 

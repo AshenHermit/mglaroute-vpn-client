@@ -1,6 +1,7 @@
 pub mod anti_dpi;
 pub mod commands;
 pub mod core;
+pub mod lifecycle;
 pub mod platform;
 pub mod probe;
 pub mod reconnect;
@@ -8,6 +9,7 @@ pub mod service_profiles;
 pub mod state;
 pub mod storage;
 pub mod subscription;
+pub mod update;
 
 use tauri::Manager;
 
@@ -48,6 +50,9 @@ command_list!(
     anti_dpi_status,
     anti_dpi_start,
     anti_dpi_stop,
+    update_check,
+    update_install,
+    update_open_releases,
 );
 
 pub fn run() {
@@ -58,6 +63,7 @@ pub fn run() {
     let handle = runtime.handle().clone();
 
     tauri::Builder::default()
+        .on_window_event(lifecycle::hide_on_close)
         .setup(move |app| {
             let dir = app
                 .path()
@@ -71,6 +77,13 @@ pub fn run() {
             handle.spawn(commands::refetch_loop(state.clone()));
             handle.spawn(commands::auto_test_loop(state.clone()));
             handle.spawn(commands::child_exit_watch(state));
+            #[cfg(desktop)]
+            {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_shell::init())?;
+            }
+            lifecycle::setup_tray(app)?;
             Ok(())
         })
         .invoke_handler(invoke_handler())

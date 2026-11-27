@@ -32,6 +32,7 @@ pub mod probe;
 pub mod service_profile;
 pub mod settings;
 pub mod subscription;
+pub mod update;
 
 pub use connection::{connection_connect, connection_disconnect, connection_status};
 pub use probe::{best_eligible_profile, probe_cancel, probe_run, profile_list};
@@ -43,6 +44,7 @@ pub use subscription::{
     subscription_add, subscription_list, subscription_refresh, subscription_remove,
     subscription_update,
 };
+pub(crate) use update::{update_check, update_install, update_open_releases};
 
 /// Generic, secret-free command errors. Underlying library errors are never
 /// forwarded: reqwest messages can echo a subscription URL and its token.
@@ -73,6 +75,10 @@ pub enum CommandError {
     Probe,
     #[error("unsupported")]
     Unsupported,
+    #[error("update operation in progress")]
+    UpdateBusy,
+    #[error("update failure")]
+    Update,
 }
 
 impl From<rusqlite::Error> for CommandError {
@@ -288,6 +294,16 @@ impl AppState {
             .mutation_guard
             .try_acquire()
             .map_err(|_| CommandError::MutationBusy)
+    }
+
+    /// All three domain guards, for terminal teardown (updater install) that
+    /// must exclude in-flight work in every domain before disassembly.
+    pub(crate) fn guards(&self) -> (&MutationGuard, &MutationGuard, &MutationGuard) {
+        (
+            &self.inner.connection_guard,
+            &self.inner.probe_guard,
+            &self.inner.mutation_guard,
+        )
     }
 }
 
@@ -960,6 +976,9 @@ mod tests {
                 "subscription_refresh",
                 "subscription_remove",
                 "subscription_update",
+                "update_check",
+                "update_install",
+                "update_open_releases",
             ]
         );
     }

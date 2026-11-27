@@ -90,4 +90,13 @@ describe("SettingsForm", () => {
       await screen.findByRole("switch", { name: /auto refetch/i }),
     ).toBeTruthy();
   });
+
+  it("uses container queries for the settings fields", async () => {
+    render(<SettingsForm />);
+    const toggle = await screen.findByRole("switch", { name: /auto refetch/i });
+    const grid = toggle.closest("label")?.parentElement;
+    expect(grid?.className).toContain("@lg:grid-cols-2");
+    expect(grid?.className).not.toContain("sm:grid-cols-2");
+    expect(grid?.parentElement?.className).toContain("@container");
+  });
 });

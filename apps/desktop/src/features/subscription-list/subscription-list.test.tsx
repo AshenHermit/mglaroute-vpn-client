@@ -14,7 +14,6 @@ vi.mock("../../lib/invoke", async (importOriginal) => ({
   invoke: vi.fn(),
 }));
 
-import App from "../../App";
 import { invoke } from "../../lib/invoke";
 import { useAppStore } from "../../stores/app.store";
 import { SubscriptionList } from "./SubscriptionList";
@@ -57,7 +56,7 @@ describe("SubscriptionList", () => {
     await waitFor(() => expect(screen.getByText("Primary feed")).toBeTruthy());
     const badge = screen.getByTestId("subscription-status-sub-1");
     expect(badge.textContent).toBe("error");
-    expect(badge.className).toContain("text-red");
+    expect(badge.className).toContain("text-destructive");
 
     fireEvent.change(screen.getByLabelText(/subscription url/i), {
       target: { value: "https://feed.example/sub" },
@@ -137,20 +136,30 @@ describe("SubscriptionList", () => {
   it.each(refreshErrors)("maps refresh error %j to notice %s", async (error, expected) => {
     mockedInvoke.mockImplementation(async (command) => {
       if (command === "subscription_refresh") throw error;
-      if (command === "profile_list") return [] as never;
-      if (command === "anti_dpi_status") return { status: "unsupported" } as never;
-      if (command === "connection_status") {
-        return { status: "disconnected", profileId: null, proxyPort: null } as never;
-      }
       return [errored] as never;
     });
 
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Subscriptions" }));
+    // Enter the feature directly: the retired nav tab no longer exists. The
+    // notice is owned by the shell toast, so assert the store value here.
+    render(<SubscriptionList />);
     fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain(expected),
+    await waitFor(() => expect(useAppStore.getState().notice).toContain(expected));
+  });
+
+  it("uses container queries so the Add button stays visible in a narrow panel", async () => {
+    render(<SubscriptionList />);
+    await waitFor(() => expect(screen.getByText("Primary feed")).toBeTruthy());
+
+    const grid = screen.getByLabelText("Subscription URL").closest("div")?.parentElement;
+    expect(grid?.className).toContain("@lg:grid-cols-[minmax(0,1fr)_10rem_auto]");
+    expect(grid?.className).not.toContain("sm:grid-cols");
+    expect(grid?.parentElement?.className).toContain("@container");
+    expect(screen.getByRole("button", { name: "Add subscription" }).className).toContain(
+      "shrink-0",
     );
+
+    const intervalLabel = screen.getByText(/Refetch interval for Primary feed/);
+    expect(intervalLabel.className).toContain("break-words");
   });
 });

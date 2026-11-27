@@ -3,12 +3,15 @@ import {
   ProbeResultSchema,
   ProbeServerEventSchema,
   SubscriptionSchema,
+  UpdateProgressEventSchema,
   type ProbeResult,
   type ProbeServerEvent,
   type Profile,
   type ServiceProfile,
   type Settings,
   type Subscription,
+  type UpdateInfo,
+  type UpdateProgressEvent,
 } from "@mglaroute/contracts";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
@@ -19,6 +22,8 @@ import { invoke } from "../lib/invoke";
  * UI/session state only. Nothing here is persisted: subscriptions, profiles,
  * settings and test results are durable data owned by the Rust commands.
  */
+export type NoticeVariant = "info" | "success" | "error" | "loading";
+
 export type AppStore = {
   subscriptions: Subscription[];
   serviceProfiles: ServiceProfile[];
@@ -31,7 +36,12 @@ export type AppStore = {
   probeCancelled: boolean;
   lastProbeFinishedAt: string | null;
   notice: string | null;
+  noticeVariant: NoticeVariant;
+  noticeSeq: number;
   selectedProfileId: string | null;
+  update: UpdateInfo | null;
+  updateInstalling: boolean;
+  updateProgress: UpdateProgressEvent | null;
   setSubscriptions: (subscriptions: Subscription[]) => void;
   setServiceProfiles: (serviceProfiles: ServiceProfile[]) => void;
   setProfiles: (profiles: Profile[]) => void;
@@ -42,8 +52,11 @@ export type AppStore = {
   setProbeSettled: () => void;
   setProbeCancelled: () => void;
   setProbeFinished: (result: ProbeResult) => void;
-  setNotice: (notice: string | null) => void;
+  setNotice: (notice: string | null, variant?: NoticeVariant) => void;
   setSelectedProfileId: (id: string | null) => void;
+  setUpdate: (update: UpdateInfo | null) => void;
+  setUpdateInstalling: (installing: boolean) => void;
+  setUpdateProgress: (progress: UpdateProgressEvent | null) => void;
 };
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -58,8 +71,13 @@ export const useAppStore = create<AppStore>((set) => ({
   probeCancelled: false,
   lastProbeFinishedAt: null,
   notice: null,
+  noticeVariant: "info",
+  noticeSeq: 0,
   // Session-only: which server the next Connect targets. Never persisted.
   selectedProfileId: null,
+  update: null,
+  updateInstalling: false,
+  updateProgress: null,
   setSubscriptions: (subscriptions) => set({ subscriptions }),
   setServiceProfiles: (serviceProfiles) => set({ serviceProfiles }),
   setProfiles: (profiles) => set({ profiles }),
@@ -123,8 +141,16 @@ export const useAppStore = create<AppStore>((set) => ({
       probeCancelled: result.cancelled,
       lastProbeFinishedAt: result.finishedAt,
     }),
-  setNotice: (notice) => set({ notice }),
+  setNotice: (notice, variant = "info") =>
+    set((state) => ({
+      notice,
+      noticeVariant: variant,
+      noticeSeq: state.noticeSeq + 1,
+    })),
   setSelectedProfileId: (selectedProfileId) => set({ selectedProfileId }),
+  setUpdate: (update) => set({ update }),
+  setUpdateInstalling: (updateInstalling) => set({ updateInstalling }),
+  setUpdateProgress: (updateProgress) => set({ updateProgress }),
 }));
 
 /** Subscribe to backend progress events. Payloads are validated before use. */
@@ -135,6 +161,7 @@ export function useBackendEvents(): void {
   const setProbeFinished = useAppStore((store) => store.setProbeFinished);
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setNotice = useAppStore((store) => store.setNotice);
+  const setUpdateProgress = useAppStore((store) => store.setUpdateProgress);
 
   useEffect(() => {
     let active = true;
@@ -182,6 +209,11 @@ export function useBackendEvents(): void {
       }
     });
 
+    subscribe(EVENTS.updateProgress, (payload) => {
+      const parsed = UpdateProgressEventSchema.safeParse(payload);
+      if (parsed.success) setUpdateProgress(parsed.data);
+    });
+
     subscribe(EVENTS.subscriptionRefreshed, (payload) => {
       const result = payload as {
         added?: unknown;
@@ -220,5 +252,6 @@ export function useBackendEvents(): void {
     setProbeFinished,
     setSubscriptions,
     setNotice,
+    setUpdateProgress,
   ]);
 }

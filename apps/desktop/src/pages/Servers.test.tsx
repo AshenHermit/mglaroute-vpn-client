@@ -12,6 +12,7 @@ vi.mock("../lib/invoke", async (importOriginal) => {
 import { invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
 import { useConnectionStore } from "../stores/connection.store";
+import { useUiStore } from "../stores/ui.store";
 import Servers from "./Servers";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -53,12 +54,16 @@ describe("Servers probe controls", () => {
     });
     useAppStore.setState({
       profiles: [server, otherServer],
+      probeTested: 0,
+      probeTotal: 0,
       probeTesting: false,
       probeTestingIds: [],
       probeCancelled: false,
+      lastProbeFinishedAt: null,
       notice: null,
       selectedProfileId: null,
     });
+    useUiStore.setState({ favorites: [], filter: { kind: "all" } });
     mockedInvoke.mockImplementation(async (command) => {
       if (command === "profile_list") return [server, otherServer] as never;
       if (command === "probe_run") {
@@ -220,5 +225,69 @@ describe("Servers probe controls", () => {
       expect(useAppStore.getState().notice).toContain("busy"),
     );
     expect(useAppStore.getState().selectedProfileId).toBe("p-1");
+  });
+
+  it("narrows rows by a case-insensitive search over remarks", async () => {
+    render(<Servers />);
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(2));
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search servers" }), {
+      target: { value: "NODE 2" },
+    });
+
+    const rows = screen.getAllByTestId("server-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute("data-profile-id")).toBe("p-2");
+  });
+
+  it("searches address and protocol as well as remarks", async () => {
+    const third: Profile = {
+      ...server,
+      id: "p-3",
+      serverId: "p-3",
+      remarks: "node 3",
+      protocol: "trojan",
+      address: "edge.example.net",
+      sortIndex: 2,
+    };
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "profile_list") return [server, otherServer, third] as never;
+      return undefined as never;
+    });
+    render(<Servers />);
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(3));
+
+    const search = screen.getByRole("searchbox", { name: "Search servers" });
+    fireEvent.change(search, { target: { value: "edge.example" } });
+    expect(screen.getAllByTestId("server-row")).toHaveLength(1);
+    expect(screen.getByTestId("server-row").getAttribute("data-profile-id")).toBe("p-3");
+
+    fireEvent.change(search, { target: { value: "VLESS" } });
+    expect(screen.getAllByTestId("server-row")).toHaveLength(2);
+  });
+
+  it("shows only favorited rows when the favorites filter is active", async () => {
+    useUiStore.setState({ favorites: ["p-2"] });
+    useUiStore.getState().setFilter({ kind: "favorites" });
+    render(<Servers />);
+    await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(2));
+
+    const rows = screen.getAllByTestId("server-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute("data-profile-id")).toBe("p-2");
+  });
+
+  it("renders probe progress, Stop test and the finished timestamp from the store", () => {
+    useAppStore.setState({
+      probeTesting: true,
+      probeTested: 3,
+      probeTotal: 5,
+      lastProbeFinishedAt: "2026-11-26T10:00:00Z",
+    });
+    render(<Servers />);
+
+    expect(screen.getByText("3 / 5")).toBeTruthy();
+    expect(screen.getByText("Finished: 26.11.2026 13:00:00")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop test" })).toBeTruthy();
   });
 });
