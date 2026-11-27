@@ -4,7 +4,7 @@ import {
   type Profile,
   ProfileSchema,
 } from "@mglaroute/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import {
@@ -56,20 +56,6 @@ export default function Servers() {
       ),
     );
   }, [profiles, filter, favorites, search]);
-
-  useEffect(() => {
-    let active = true;
-    void invoke("profile_list", ProfileSchema.array())
-      .then((rows) => {
-        if (active) setProfiles(rows);
-      })
-      .catch(() => {
-        if (active) setNotice("Could not load servers");
-      });
-    return () => {
-      active = false;
-    };
-  }, [setProfiles, setNotice]);
 
   const setActive = async (profileId: string) => {
     if (connection.status !== "connected") {

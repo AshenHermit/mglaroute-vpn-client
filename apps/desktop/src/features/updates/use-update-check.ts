@@ -6,10 +6,14 @@ import { useAppStore } from "../../stores/app.store";
 /** Six hours, in milliseconds. */
 export const UPDATE_CHECK_INTERVAL_MS = 21600000;
 
+/** Startup delay before the first check, in milliseconds. */
+export const UPDATE_CHECK_START_DELAY_MS = 1000;
+
 /**
- * Session-only, quiet update check. Runs on mount and every interval tick;
- * a failed check stores nothing and shows nothing, and simply retries on the
- * next tick. A version is announced at most once per browser session.
+ * Session-only, quiet update check. Runs shortly after mount and every
+ * interval tick; a failed check stores nothing and shows nothing, and simply
+ * retries on the next tick. A version is announced at most once per browser
+ * session.
  */
 export function useUpdateCheck(): void {
   const setUpdate = useAppStore((store) => store.setUpdate);
@@ -44,10 +48,11 @@ export function useUpdateCheck(): void {
         });
     };
 
-    check();
+    const initialTimer = setTimeout(check, UPDATE_CHECK_START_DELAY_MS);
     const timer = setInterval(check, UPDATE_CHECK_INTERVAL_MS);
     return () => {
       active = false;
+      clearTimeout(initialTimer);
       clearInterval(timer);
     };
   }, [setUpdate, setNotice]);

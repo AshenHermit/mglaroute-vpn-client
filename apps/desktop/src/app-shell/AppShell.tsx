@@ -18,6 +18,7 @@ type BottomTab = "connect" | "servers" | "more";
 export function AppShell() {
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setProfiles = useAppStore((store) => store.setProfiles);
+  const setNotice = useAppStore((store) => store.setNotice);
   const [view, setView] = useState<"servers" | "settings">("servers");
   const [bottomTab, setBottomTab] = useState<BottomTab>("connect");
 
@@ -35,12 +36,13 @@ export function AppShell() {
         if (active) setProfiles(rows);
       })
       .catch(() => {
-        // Error text may carry link data; stay silent.
+        // Error text may carry link data; show only a fixed, safe message.
+        if (active) setNotice("Could not load servers");
       });
     return () => {
       active = false;
     };
-  }, [setSubscriptions, setProfiles]);
+  }, [setSubscriptions, setProfiles, setNotice]);
 
   // Portrait nav tracks the last tap, not scroll position. `scrollIntoView` is
   // optional so jsdom (and any WebView without it) never throws on a nav tap.
