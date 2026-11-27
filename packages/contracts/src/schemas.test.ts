@@ -3,6 +3,8 @@ import {
   AntiDpiStatusSchema,
   ConnectionStateSchema,
   EVENTS,
+  FeedServiceListSchema,
+  FeedServiceSchema,
   ProfileSchema,
   ProbeResultSchema,
   ProbeServerEventSchema,
@@ -216,5 +218,21 @@ describe("contract schemas", () => {
 
   it("maps the update progress event name", () => {
     expect(EVENTS.updateProgress).toBe("update-progress");
+  });
+
+  it("parses public feed services and strips admin-only fields", () => {
+    expect(
+      FeedServiceSchema.parse({
+        id: "svc-1",
+        name: "YouTube",
+        testUrls: ["https://secret.example"],
+        isEnabled: true,
+        isDefault: true,
+      }),
+    ).toEqual({ id: "svc-1", name: "YouTube" });
+    expect(
+      FeedServiceListSchema.parse([{ id: "svc-2", name: "Discord" }]),
+    ).toEqual([{ id: "svc-2", name: "Discord" }]);
+    expect(() => FeedServiceSchema.parse({ id: "svc-3" })).toThrow();
   });
 });

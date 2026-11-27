@@ -11,6 +11,7 @@ import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
 import { commandErrorCode, invoke } from "../../lib/invoke";
 import { useAppStore } from "../../stores/app.store";
+import { SubscriptionDialog } from "./SubscriptionDialog";
 
 const badgeStyles: Record<Subscription["status"], string> = {
   active: "bg-primary/15 text-primary",
@@ -22,9 +23,11 @@ export function SubscriptionList() {
   const subscriptions = useAppStore((store) => store.subscriptions);
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setNotice = useAppStore((store) => store.setNotice);
-  const [url, setUrl] = useState("");
-  const [name, setName] = useState("");
   const [intervals, setIntervals] = useState<Record<string, string>>({});
+  const [dialog, setDialog] = useState<{
+    mode: "add" | "edit";
+    subscription: Subscription | null;
+  } | null>(null);
 
   const showRows = (rows: Subscription[]) => {
     setSubscriptions(rows);
@@ -49,21 +52,14 @@ export function SubscriptionList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setSubscriptions, setNotice]);
 
-  const add = async () => {
-    const trimmed = url.trim();
-    if (!trimmed) {
-      setNotice("Subscription URL is required");
-      return;
-    }
-    try {
-      const args = name.trim() ? { url: trimmed, name: name.trim() } : { url: trimmed };
-      const created = await invoke("subscription_add", SubscriptionSchema, args);
-      showRows([...subscriptions, created]);
-      setUrl("");
-      setName("");
-    } catch {
-      setNotice("Could not add subscription");
-    }
+  const onSaved = (saved: Subscription) => {
+    setDialog(null);
+    const exists = subscriptions.some((row) => row.id === saved.id);
+    showRows(
+      exists
+        ? subscriptions.map((row) => (row.id === saved.id ? saved : row))
+        : [...subscriptions, saved],
+    );
   };
 
   const refresh = async (id: string) => {
@@ -126,99 +122,91 @@ export function SubscriptionList() {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Subscriptions</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="@container mb-4">
-          <div className="grid gap-3 @lg:grid-cols-[minmax(0,1fr)_10rem_auto] @lg:items-end">
-            <div className="min-w-0">
-              <label
-                htmlFor="subscription-url"
-                className="mb-1 block text-xs text-muted-foreground"
-              >
-                Subscription URL
-              </label>
-              <Input
-                id="subscription-url"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://example.com/subscription"
-                className="min-w-0"
-              />
-            </div>
-            <div className="min-w-0">
-              <label
-                htmlFor="subscription-name"
-                className="mb-1 block text-xs text-muted-foreground"
-              >
-                Name (optional)
-              </label>
-              <Input
-                id="subscription-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="min-w-0"
-              />
-            </div>
-            <Button className="shrink-0" onClick={() => void add()}>
-              Add subscription
-            </Button>
-          </div>
-        </div>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Subscriptions</h2>
+        <Button onClick={() => setDialog({ mode: "add", subscription: null })}>
+          Add subscription
+        </Button>
+      </div>
 
-        {subscriptions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No subscriptions yet.</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {subscriptions.map((subscription) => (
-              <li key={subscription.id} className="py-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{subscription.name}</span>
-                    <span
-                      data-testid={`subscription-status-${subscription.id}`}
-                      className={`rounded px-2 py-0.5 text-xs font-semibold ${badgeStyles[subscription.status]}`}
-                    >
-                      {subscription.status}
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="secondary" onClick={() => void refresh(subscription.id)}>
-                      Refresh
-                    </Button>
-                    <Button variant="danger" onClick={() => void remove(subscription.id)}>
-                      Remove
-                    </Button>
-                  </div>
-                </div>
-                <div className="@container mt-2 flex flex-wrap items-end gap-3">
-                  <Switch
-                    checked={subscription.enabled}
-                    label={`Enabled for ${subscription.name}`}
-                    onCheckedChange={(checked) => void setEnabled(subscription, checked)}
-                  />
-                  <span className="min-w-0 break-words text-xs text-muted-foreground">
-                    Refetch interval for {subscription.name} (minutes)
-                  </span>
-                  <Input
-                    aria-label={`Refetch interval for ${subscription.name} (minutes)`}
-                    type="number"
-                    min={0}
-                    className="w-20 shrink-0"
-                    value={intervals[subscription.id] ?? String(subscription.autoRefetchMinutes)}
-                    onChange={(event) =>
-                      setIntervals({ ...intervals, [subscription.id]: event.target.value })
-                    }
-                    onBlur={(event) => void commitInterval(subscription, event.target.value)}
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+      {subscriptions.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No subscriptions yet.</p>
+      ) : (
+        subscriptions.map((subscription) => (
+          <Card key={subscription.id}>
+            <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <CardTitle className="min-w-0 break-words">{subscription.name}</CardTitle>
+                <span
+                  data-testid={`subscription-status-${subscription.id}`}
+                  className={`rounded px-2 py-0.5 text-xs font-semibold ${badgeStyles[subscription.status]}`}
+                >
+                  {subscription.status}
+                </span>
+              </div>
+              <Button
+                variant="secondary"
+                aria-label={`Edit ${subscription.name}`}
+                onClick={() => setDialog({ mode: "edit", subscription })}
+              >
+                Edit
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p
+                className="min-w-0 break-all text-xs text-muted-foreground"
+                title={subscription.url}
+              >
+                {subscription.url}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => void refresh(subscription.id)}>
+                  Refresh
+                </Button>
+                <Button variant="danger" onClick={() => void remove(subscription.id)}>
+                  Remove
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <Switch
+                  checked={subscription.enabled}
+                  label={`Enabled for ${subscription.name}`}
+                  onCheckedChange={(checked) => void setEnabled(subscription, checked)}
+                />
+                <label
+                  htmlFor={`subscription-interval-${subscription.id}`}
+                  className="min-w-0 break-words text-xs text-muted-foreground"
+                >
+                  Refetch interval for {subscription.name} (minutes)
+                </label>
+                <Input
+                  id={`subscription-interval-${subscription.id}`}
+                  aria-label={`Refetch interval for ${subscription.name} (minutes)`}
+                  type="number"
+                  min={0}
+                  className="w-20 shrink-0"
+                  value={intervals[subscription.id] ?? String(subscription.autoRefetchMinutes)}
+                  onChange={(event) =>
+                    setIntervals({ ...intervals, [subscription.id]: event.target.value })
+                  }
+                  onBlur={(event) => void commitInterval(subscription, event.target.value)}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        ))
+      )}
+
+      {dialog && (
+        <SubscriptionDialog
+          open
+          mode={dialog.mode}
+          subscription={dialog.subscription}
+          onClose={() => setDialog(null)}
+          onSaved={onSaved}
+        />
+      )}
+    </div>
   );
 }

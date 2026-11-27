@@ -37,9 +37,13 @@ const errored = {
 };
 
 describe("SubscriptionList", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
 
   beforeEach(() => {
+    vi.stubGlobal("scrollTo", vi.fn());
     vi.clearAllMocks();
     useAppStore.setState({ notice: null });
     mockedInvoke.mockImplementation(async (command) => {
@@ -50,7 +54,7 @@ describe("SubscriptionList", () => {
     });
   });
 
-  it("posts the URL on Add and marks failed subscriptions with a red error badge", async () => {
+  it("opens the add dialog and posts URL plus optional name", async () => {
     render(<SubscriptionList />);
 
     await waitFor(() => expect(screen.getByText("Primary feed")).toBeTruthy());
@@ -58,17 +62,48 @@ describe("SubscriptionList", () => {
     expect(badge.textContent).toBe("error");
     expect(badge.className).toContain("text-destructive");
 
-    fireEvent.change(screen.getByLabelText(/subscription url/i), {
+    fireEvent.click(screen.getByRole("button", { name: "Add subscription" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Subscription URL"), {
       target: { value: "https://feed.example/sub" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /add subscription/i }));
+    fireEvent.change(dialog.getByLabelText("Name"), { target: { value: "Added feed" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Add subscription" }));
 
     await waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "subscription_add",
-        SubscriptionSchema,
-        { url: "https://feed.example/sub" },
-      ),
+      expect(mockedInvoke).toHaveBeenCalledWith("subscription_add", SubscriptionSchema, {
+        url: "https://feed.example/sub",
+        name: "Added feed",
+      }),
+    );
+  });
+
+  it("renders one card per subscription and opens edit prefilled", async () => {
+    mockedInvoke.mockImplementation(async (command, _schema, args) => {
+      if (command === "subscription_update") {
+        const payload = args as Record<string, unknown>;
+        return { ...errored, name: String(payload.name) } as never;
+      }
+      return [errored] as never;
+    });
+    render(<SubscriptionList />);
+    await waitFor(() => expect(screen.getByText("Primary feed")).toBeTruthy());
+    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /edit primary feed/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect((dialog.getByLabelText("Name") as HTMLInputElement).value).toBe("Primary feed");
+    expect((dialog.getByLabelText("Subscription URL") as HTMLInputElement).value).toBe(
+      "https://secret.example/sub",
+    );
+    fireEvent.change(dialog.getByLabelText("Name"), { target: { value: "Renamed" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith("subscription_update", SubscriptionSchema, {
+        id: "sub-1",
+        name: "Renamed",
+        url: "https://secret.example/sub",
+      }),
     );
   });
 
@@ -84,9 +119,6 @@ describe("SubscriptionList", () => {
               ? payload.autoRefetchMinutes
               : errored.autoRefetchMinutes,
         } as never;
-      }
-      if (command === "subscription_add") {
-        return { ...errored, id: "sub-2", name: "Added feed", status: "active" } as never;
       }
       return [errored] as never;
     });
@@ -115,14 +147,6 @@ describe("SubscriptionList", () => {
         autoRefetchMinutes: 1,
       }),
     );
-
-    fireEvent.change(ui.getByPlaceholderText(/example\.com\/subscription/i), {
-      target: { value: "https://feed.example/sub" },
-    });
-    fireEvent.click(ui.getByRole("button", { name: /add subscription/i }));
-    await waitFor(() => expect(ui.getByText("Added feed")).toBeTruthy());
-    const addedInterval = ui.getByLabelText(/refetch interval for added feed/i) as HTMLInputElement;
-    expect(Number(addedInterval.value)).toBeGreaterThan(0);
   });
 
   const refreshErrors: Array<[Record<string, null>, string]> = [
@@ -145,21 +169,5 @@ describe("SubscriptionList", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 
     await waitFor(() => expect(useAppStore.getState().notice).toContain(expected));
-  });
-
-  it("uses container queries so the Add button stays visible in a narrow panel", async () => {
-    render(<SubscriptionList />);
-    await waitFor(() => expect(screen.getByText("Primary feed")).toBeTruthy());
-
-    const grid = screen.getByLabelText("Subscription URL").closest("div")?.parentElement;
-    expect(grid?.className).toContain("@lg:grid-cols-[minmax(0,1fr)_10rem_auto]");
-    expect(grid?.className).not.toContain("sm:grid-cols");
-    expect(grid?.parentElement?.className).toContain("@container");
-    expect(screen.getByRole("button", { name: "Add subscription" }).className).toContain(
-      "shrink-0",
-    );
-
-    const intervalLabel = screen.getByText(/Refetch interval for Primary feed/);
-    expect(intervalLabel.className).toContain("break-words");
   });
 });
