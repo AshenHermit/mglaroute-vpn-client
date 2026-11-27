@@ -1,7 +1,7 @@
 import AdmZip from "adm-zip";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ vi.mock("node:child_process", () => {
   return { default: { spawnSync }, spawnSync };
 });
 
-import { extractZipEntry, verifyBinaries } from "./fetch-xray.mjs";
+import { extractZipEntry, stageGeoAssets, verifyBinaries } from "./fetch-xray.mjs";
 import { GEO_ASSETS } from "./xray-assets.mjs";
 
 const ANTI_ASSETS = ["winws2.exe", "cygwin1.dll", "WinDivert.dll", "WinDivert64.sys"];
@@ -103,6 +103,34 @@ describe("geo assets", () => {
       expect(() => verifyBinaries({ ...TEST_ENV, binDir: ctx.dir })).toThrow(/geosite\.dat/i);
     } finally {
       io.restore();
+      rmSync(ctx.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stageGeoAssets rejects a published digest that does not match the geo bytes", () => {
+    // Production must validate the zip's published sidecar against the extracted
+    // .dat bytes. A self-consistent sidecar computed from the bytes is NOT enough.
+    const { zip } = zipFixture();
+    zip.updateFile("geoip.dat.sha256", Buffer.from(`sha256:${sha256Hex("different-payload")}\n`));
+    const ctx = fixture({ geoAssets: [] });
+    try {
+      expect(() => stageGeoAssets(zip, ctx.dir)).toThrow(/sha256 mismatch/i);
+      expect(existsSync(join(ctx.dir, "geoip.dat"))).toBe(false);
+      expect(existsSync(join(ctx.dir, "geoip.dat.sha256"))).toBe(false);
+    } finally {
+      rmSync(ctx.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stageGeoAssets rejects a geo asset with no published sidecar", () => {
+    const { zip } = zipFixture();
+    zip.deleteFile("geosite.dat.sha256");
+    const ctx = fixture({ geoAssets: [] });
+    try {
+      expect(() => stageGeoAssets(zip, ctx.dir)).toThrow(/geosite\.dat\.sha256/i);
+      expect(existsSync(join(ctx.dir, "geoip.dat"))).toBe(false); // validate all before writing any
+      expect(existsSync(join(ctx.dir, "geosite.dat"))).toBe(false);
+    } finally {
       rmSync(ctx.dir, { recursive: true, force: true });
     }
   });

@@ -41,6 +41,24 @@ export function extractZipEntry(zip, name) {
   return entry.getData();
 }
 
+// Stage geo assets only when the zip's published sidecar matches the extracted
+// bytes. Computing the digest from the bytes alone would bless corrupted data.
+export function stageGeoAssets(zip, binDir) {
+  const staged = [];
+  for (const name of GEO_ASSETS) {
+    const data = extractZipEntry(zip, name);
+    const digestText = extractZipEntry(zip, `${name}.sha256`).toString("utf8");
+    if (!verifyBufferSha256(data, digestText)) {
+      throw new Error(`sha256 mismatch for ${name} in downloaded archive`);
+    }
+    staged.push({ name, data, digest: sha256Hex(data) });
+  }
+  for (const { name, data, digest } of staged) {
+    fs.writeFileSync(path.join(binDir, name), data);
+    fs.writeFileSync(path.join(binDir, `${name}.sha256`), `sha256:${digest}\n`);
+  }
+}
+
 function extractBinary(zip) {
   const data = extractZipEntry(zip, PLATFORM === "win32" ? "xray.exe" : "xray");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mglaroute-xray-"));
@@ -86,11 +104,7 @@ async function fetchBinary() {
   }
   fs.writeFileSync(SHA_FILE, `sha256:${sha256Hex(fs.readFileSync(SUITED))}\n`);
 
-  for (const name of GEO_ASSETS) {
-    const data = extractZipEntry(zip, name);
-    fs.writeFileSync(path.join(BIN_DIR, name), data);
-    fs.writeFileSync(path.join(BIN_DIR, `${name}.sha256`), `sha256:${sha256Hex(data)}\n`);
-  }
+  stageGeoAssets(zip, BIN_DIR);
 
   console.log(checkVersion(SUITED).trim());
   console.log(`Bundled xray${EXT} and xray-${TRIPLE}${EXT}`);
