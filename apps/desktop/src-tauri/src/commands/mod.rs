@@ -29,6 +29,7 @@ use crate::storage::repos::{settings_repo, subscription_repo};
 
 pub mod connection;
 pub mod probe;
+pub mod routing;
 pub mod service_profile;
 pub mod settings;
 pub mod subscription;
@@ -36,6 +37,11 @@ pub mod update;
 
 pub use connection::{connection_connect, connection_disconnect, connection_status};
 pub use probe::{best_eligible_profile, probe_cancel, probe_run, profile_list};
+pub use routing::{
+    routing_profile_activate, routing_profile_create, routing_profile_list,
+    routing_profile_remove, routing_profile_update, routing_rule_create, routing_rule_list,
+    routing_rule_remove, routing_rule_reorder, routing_rule_update,
+};
 pub use service_profile::{
     service_profile_create, service_profile_list, service_profile_remove, service_profile_update,
 };
@@ -964,6 +970,16 @@ mod tests {
                 "probe_cancel",
                 "probe_run",
                 "profile_list",
+                "routing_profile_activate",
+                "routing_profile_create",
+                "routing_profile_list",
+                "routing_profile_remove",
+                "routing_profile_update",
+                "routing_rule_create",
+                "routing_rule_list",
+                "routing_rule_remove",
+                "routing_rule_reorder",
+                "routing_rule_update",
                 "service_profile_create",
                 "service_profile_list",
                 "service_profile_remove",
