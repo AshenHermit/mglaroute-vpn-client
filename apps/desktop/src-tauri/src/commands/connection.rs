@@ -13,6 +13,7 @@ use crate::core::snapshot::snapshot_for;
 use crate::core::supervisor::wait_for_port;
 use crate::storage::models::Profile;
 use crate::storage::repos::{profile_repo, settings_repo};
+use crate::storage::routing_repo;
 
 /// Resolve which server a Connect should launch, without touching the network
 /// or the process. An explicit id keeps the enabled-present lookup and is not
@@ -44,12 +45,13 @@ pub(crate) async fn connect_impl(
     state: &AppState,
     profile_id: Option<String>,
 ) -> Result<ConnectionStatePayload, CommandError> {
-    let (settings, profile) = {
+    let (settings, profile, rules) = {
         let conn = state.inner.conn.lock().await;
         let settings = settings_repo::get(&conn)?;
         let profile = select_connect_profile(&conn, profile_id)?
             .ok_or(CommandError::NotFound)?;
-        (settings, profile)
+        let rules = routing_repo::list_active_rules(&conn)?;
+        (settings, profile, rules)
     };
 
     let port = u16::try_from(settings.local_proxy_port).map_err(|_| CommandError::InvalidInput)?;
@@ -114,8 +116,13 @@ pub(crate) async fn connect_impl(
     }
 
     let snapshot = snapshot_for(&profile, port, &state.inner.config_dir);
-    let config =
-        build_connection_config(&snapshot, &exclusions).map_err(|_| CommandError::Core)?;
+    let config = build_connection_config(
+        &snapshot,
+        &exclusions,
+        &rules,
+        state.inner.asset_dir.as_deref(),
+    )
+    .map_err(|_| CommandError::Core)?;
     if let Some(parent) = snapshot.config_path.parent() {
         std::fs::create_dir_all(parent).map_err(|_| CommandError::Core)?;
     }

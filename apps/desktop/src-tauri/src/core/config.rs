@@ -1,10 +1,14 @@
 //! Xray JSON config assembly. No process launch, no filesystem writes here:
 //! callers persist the returned value next to the [`ConfigSnapshot`] path.
 
+use std::path::Path;
+
 use serde_json::{json, Map, Value};
 
 use crate::{
-    bypass::XRAY_BYPASS_IPS, storage::models::Profile, subscription::decode::decode_base64,
+    bypass::XRAY_BYPASS_IPS,
+    storage::models::{Profile, RoutingRule},
+    subscription::decode::decode_base64,
 };
 
 use super::snapshot::ConfigSnapshot;
@@ -362,39 +366,109 @@ pub fn build_probe_config(profile: &Profile, port: u16) -> Result<Value> {
     }))
 }
 
+/// Map a routing rule's `outbound` value to the xray outbound tag.
+fn outbound_tag(value: &str) -> &'static str {
+    match value {
+        "direct" => "direct",
+        "block" => "block",
+        // `proxy` and any unknown value fall through to the profile outbound.
+        _ => "proxy-out",
+    }
+}
+
+/// Parse a rule's JSON `string[]` column, dropping empty entries. Entry strings
+/// are preserved verbatim (so `geosite:`/`geoip:` prefixes survive); only empty
+/// strings and surrounding whitespace are trimmed.
+fn rule_entries(raw: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(raw)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+        .collect()
+}
+
 /// One config for a live connection: single `proxy-in`, profile outbound,
-/// `direct` freedom fallback and bypass rules for `exclusions`.
-pub fn build_connection_config(snapshot: &ConfigSnapshot, exclusions: &[String]) -> Result<Value> {
-    let mut rules = Vec::with_capacity(exclusions.len() + 2);
+/// `direct` freedom fallback, private bypass, exclusions, user routing rules
+/// in sort order and a catch-all proxy rule last.
+pub fn build_connection_config(
+    snapshot: &ConfigSnapshot,
+    exclusions: &[String],
+    rules: &[RoutingRule],
+    asset_dir: Option<&Path>,
+) -> Result<Value> {
+    let mut routing_rules = Vec::with_capacity(exclusions.len() + rules.len() * 2 + 2);
     // Local/private destinations must go direct: the remote node cannot reach
     // the user's LAN, and may answer with a Cloudflare HTTP/HTTPS port error.
-    rules.push(json!({
+    routing_rules.push(json!({
         "type": "field",
         "ip": XRAY_BYPASS_IPS,
         "outboundTag": "direct",
     }));
     for domain in exclusions.iter().filter(|domain| !domain.is_empty()) {
-        rules.push(json!({
+        routing_rules.push(json!({
             "type": "field",
             "field": "domain",
             "domain": [domain],
             "outboundTag": "direct",
         }));
     }
-    rules.push(json!({
+
+    let mut needs_block = false;
+    for rule in rules.iter().filter(|rule| rule.enabled) {
+        let tag = outbound_tag(&rule.outbound);
+        if tag == "block" {
+            needs_block = true;
+        }
+        let domains = rule_entries(&rule.domains);
+        if !domains.is_empty() {
+            routing_rules.push(json!({
+                "type": "field",
+                "field": "domain",
+                "domain": domains,
+                "outboundTag": tag,
+            }));
+        }
+        let ips = rule_entries(&rule.ips);
+        if !ips.is_empty() {
+            routing_rules.push(json!({
+                "type": "field",
+                "field": "ip",
+                "ip": ips,
+                "outboundTag": tag,
+            }));
+        }
+    }
+
+    routing_rules.push(json!({
         "type": "field",
         "inboundTag": ["proxy-in"],
         "outboundTag": "proxy-out",
     }));
-    Ok(json!({
-        "log": {"loglevel": "warning"},
-        "inbounds": [mixed_inbound("proxy-in", snapshot.proxy_port)],
-        "outbounds": [
-            build_outbound(&snapshot.profile, "proxy-out")?,
-            json!({"tag": "direct", "protocol": "freedom", "settings": {}}),
-        ],
-        "routing": routing(rules),
-    }))
+
+    let mut outbounds = vec![
+        build_outbound(&snapshot.profile, "proxy-out")?,
+        json!({"tag": "direct", "protocol": "freedom", "settings": {}}),
+    ];
+    if needs_block {
+        outbounds.push(json!({"tag": "block", "protocol": "blackhole", "settings": {}}));
+    }
+
+    let mut config = Map::new();
+    config.insert("log".to_string(), json!({"loglevel": "warning"}));
+    config.insert(
+        "inbounds".to_string(),
+        json!([mixed_inbound("proxy-in", snapshot.proxy_port)]),
+    );
+    config.insert("outbounds".to_string(), Value::Array(outbounds));
+    config.insert("routing".to_string(), routing(routing_rules));
+    if let Some(dir) = asset_dir {
+        config.insert(
+            "env".to_string(),
+            json!({"XRAY_LOCATION_ASSET": dir.to_string_lossy().into_owned()}),
+        );
+    }
+    Ok(Value::Object(config))
 }
 
 #[cfg(test)]
@@ -405,6 +479,7 @@ mod tests {
 
     use super::*;
     use crate::core::snapshot::snapshot_for;
+    use crate::storage::models::RoutingRule;
 
     fn vless_profile(id: &str, port: u16) -> Profile {
         Profile {
@@ -536,7 +611,7 @@ mod tests {
     fn connection_config_shape() {
         let profile = vless_profile("a", 443);
         let snapshot = snapshot_for(&profile, 10808, Path::new("C:/tmp/xray"));
-        let config = build_connection_config(&snapshot, &["example.com".to_string()])
+        let config = build_connection_config(&snapshot, &["example.com".to_string()], &[], None)
             .expect("connection config");
 
         assert_eq!(config["log"]["loglevel"], "warning");
@@ -579,6 +654,8 @@ mod tests {
         let config = build_connection_config(
             &snapshot_for(&profile, 10808, Path::new("C:/tmp/xray")),
             &[],
+            &[],
+            None,
         )
         .expect("connection config");
 
@@ -628,9 +705,13 @@ mod tests {
     }
 
     fn proxy_outbound(profile: &Profile) -> Value {
-        let config =
-            build_connection_config(&snapshot_for(profile, 10808, Path::new("C:/tmp/xray")), &[])
-                .unwrap_or_else(|error| panic!("config build failed (test helper): {error}"));
+        let config = build_connection_config(
+            &snapshot_for(profile, 10808, Path::new("C:/tmp/xray")),
+            &[],
+            &[],
+            None,
+        )
+        .unwrap_or_else(|error| panic!("config build failed (test helper): {error}"));
         config["outbounds"][0].clone()
     }
 
@@ -672,6 +753,8 @@ mod tests {
         let config = build_connection_config(
             &snapshot_for(&profile, 10808, Path::new("C:/tmp/xray")),
             &[],
+            &[],
+            None,
         )
         .expect("config");
         let outbounds = config["outbounds"].as_array().unwrap();
@@ -700,6 +783,8 @@ mod tests {
         let config = build_connection_config(
             &snapshot_for(&reality, 10808, Path::new("C:/tmp/xray")),
             &[],
+            &[],
+            None,
         )
         .expect("reality config");
         let proxy = &config["outbounds"][0];
@@ -717,6 +802,8 @@ mod tests {
         let config = build_connection_config(
             &snapshot_for(&vmess_profile(), 10808, Path::new("C:/tmp/xray")),
             &[],
+            &[],
+            None,
         )
         .expect("vmess config");
         let proxy = &config["outbounds"][0];
@@ -734,7 +821,167 @@ mod tests {
         assert!(build_connection_config(
             &snapshot_for(&profile, 10808, Path::new("C:/tmp/xray")),
             &[],
+            &[],
+            None,
         )
         .is_err());
+    }
+
+    fn rule(outbound: &str, domains: &[&str], ips: &[&str], enabled: bool, sort: i64) -> RoutingRule {
+        RoutingRule {
+            id: format!("r-{sort}"),
+            remark: String::new(),
+            enabled,
+            outbound: outbound.to_string(),
+            domains: serde_json::to_string(&domains).expect("domains json"),
+            ips: serde_json::to_string(&ips).expect("ips json"),
+            sort,
+            ..Default::default()
+        }
+    }
+
+    fn config_for_rules(rules: &[RoutingRule]) -> Value {
+        let profile = vless_profile("a", 443);
+        build_connection_config(
+            &snapshot_for(&profile, 10808, Path::new("C:/tmp/xray")),
+            &["excluded.example".to_string()],
+            rules,
+            None,
+        )
+        .expect("connection config")
+    }
+
+    fn rules_of(config: &Value) -> Vec<Value> {
+        config["routing"]["rules"]
+            .as_array()
+            .expect("routing rules array")
+            .clone()
+    }
+
+    #[test]
+    fn build_connection_config_no_active_rules_unchanged() {
+        let config = config_for_rules(&[]);
+
+        assert_eq!(config["outbounds"].as_array().expect("outbounds").len(), 2);
+        let rules = rules_of(&config);
+        // private bypass first, one exclusion rule, catch-all last
+        assert!(rules[0]["ip"].is_array());
+        assert_eq!(rules[0]["outboundTag"], "direct");
+        assert_eq!(rules[1]["domain"][0], "excluded.example");
+        assert_eq!(rules[1]["outboundTag"], "direct");
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[2]["inboundTag"][0], "proxy-in");
+        assert_eq!(rules[2]["outboundTag"], "proxy-out");
+    }
+
+    #[test]
+    fn build_connection_config_rule_order_and_disabled_rule_skipped() {
+        let rules = vec![
+            rule("proxy", &["proxy.example"], &[], true, 0),
+            rule("block", &[], &["10.1.2.0/24"], true, 1),
+            rule("direct", &["skip.example"], &[], false, 2),
+        ];
+        let config = config_for_rules(&rules);
+        let generated = rules_of(&config);
+
+        // private bypass + exclusion precede user rules, catch-all is last
+        assert!(generated[0]["ip"].is_array());
+        assert_eq!(generated[1]["domain"][0], "excluded.example");
+        let last = generated.len() - 1;
+        assert_eq!(generated[last]["inboundTag"][0], "proxy-in");
+        assert_eq!(generated[last]["outboundTag"], "proxy-out");
+
+        let user = &generated[2..last];
+        assert_eq!(user.len(), 2, "disabled rule must be skipped");
+        assert_eq!(user[0]["domain"][0], "proxy.example");
+        assert_eq!(user[0]["outboundTag"], "proxy-out");
+        assert_eq!(user[1]["ip"][0], "10.1.2.0/24");
+        assert_eq!(user[1]["outboundTag"], "block");
+        assert!(
+            !user.iter().any(|r| r["domain"][0] == "skip.example"),
+            "disabled rule must not appear"
+        );
+    }
+
+    #[test]
+    fn build_connection_config_block_rule_adds_blackhole() {
+        let rules = vec![rule("block", &["bad.example"], &[], true, 0)];
+        let config = config_for_rules(&rules);
+
+        let outbounds = config["outbounds"].as_array().expect("outbounds");
+        let block = outbounds
+            .iter()
+            .find(|outbound| outbound["tag"] == "block")
+            .expect("block outbound");
+        assert_eq!(block["protocol"], "blackhole");
+        assert_eq!(block["settings"], json!({}));
+
+        assert!(
+            rules_of(&config)
+                .iter()
+                .any(|r| r["domain"][0] == "bad.example" && r["outboundTag"] == "block"),
+            "user rule must point at block outbound"
+        );
+    }
+
+    #[test]
+    fn build_connection_config_no_block_rule_omits_blackhole() {
+        let config = config_for_rules(&[rule("proxy", &["ok.example"], &[], true, 0)]);
+        let outbounds = config["outbounds"].as_array().expect("outbounds");
+        assert!(
+            !outbounds.iter().any(|outbound| outbound["tag"] == "block"),
+            "no block rule means no blackhole outbound"
+        );
+    }
+
+    #[test]
+    fn build_connection_config_preserves_geo_prefixes_and_sets_asset_env() {
+        let rule = rule("direct", &["geosite:private"], &["geoip:private"], true, 0);
+        let profile = vless_profile("a", 443);
+        let snapshot = snapshot_for(&profile, 10808, Path::new("C:/tmp/xray"));
+
+        let with_env = build_connection_config(
+            &snapshot,
+            &[],
+            &[rule.clone()],
+            Some(Path::new("C:/fake/binaries")),
+        )
+        .expect("config with asset env");
+        assert_eq!(
+            with_env["env"]["XRAY_LOCATION_ASSET"],
+            "C:/fake/binaries"
+        );
+        let generated = rules_of(&with_env);
+        assert!(generated.iter().any(|r| r["domain"][0] == "geosite:private"));
+        assert!(generated.iter().any(|r| r["ip"][0] == "geoip:private"));
+
+        let without_env =
+            build_connection_config(&snapshot, &[], &[rule], None).expect("config without env");
+        assert!(
+            without_env.get("env").is_none(),
+            "asset_dir None must not add an env key"
+        );
+    }
+
+    #[test]
+    fn build_probe_config_unchanged_with_routing_rules() {
+        // build_probe_config takes no routing input: it must stay isolated even
+        // when connection-level rules and exclusions would point elsewhere.
+        let profile = vless_profile("a", 443);
+        let config = build_probe_config(&profile, 1080).expect("probe config");
+
+        let outbounds = config["outbounds"].as_array().expect("outbounds");
+        assert_eq!(outbounds.len(), 1, "probe config has exactly one outbound");
+        assert_eq!(outbounds[0]["tag"], "probe-out");
+
+        let rules = rules_of(&config);
+        assert_eq!(rules.len(), 1, "probe config has exactly one routing rule");
+        assert_eq!(rules[0]["inboundTag"][0], "probe-in");
+        assert_eq!(rules[0]["outboundTag"], "probe-out");
+        assert!(
+            !outbounds.iter().any(|o| o["tag"] == "block" || o["protocol"] == "blackhole"),
+            "probe config must have no block outbound"
+        );
+        assert!(config.get("env").is_none(), "probe config must have no env");
     }
 }

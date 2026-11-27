@@ -182,6 +182,9 @@ struct AppStateInner {
     mutation_guard: MutationGuard,
     runtime: Mutex<RuntimeState>,
     config_dir: PathBuf,
+    /// Directory holding bundled geoip/geosite dat files. Sent to xray via
+    /// `XRAY_LOCATION_ASSET` in generated configs; `None` in tests.
+    asset_dir: Option<PathBuf>,
     launcher: Box<dyn CoreLauncher>,
     job: Arc<JobHandle>,
     // Guarded by a std Mutex so `probe_cancel` can check "running" and send the
@@ -235,6 +238,7 @@ impl AppState {
                     last_switch: None,
                 }),
                 config_dir,
+                asset_dir: None,
                 launcher,
                 job,
                 probe_running: std::sync::Mutex::new(false),
@@ -318,7 +322,10 @@ impl AppState {
 /// cores bind their own loopback proxy and never touch the system proxy, so
 /// cleanup ordering relative to proxy restore is irrelevant. No auto-connect:
 /// the operator decides when to reconnect.
-pub fn bootstrap(dir: &Path) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
+pub fn bootstrap(
+    dir: &Path,
+    asset_dir: Option<PathBuf>,
+) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;
     let mut conn = Connection::open(dir.join("client.db"))?;
     migrate(&conn)?;
@@ -334,13 +341,19 @@ pub fn bootstrap(dir: &Path) -> std::result::Result<AppState, Box<dyn std::error
         proxy.restore(&previous)?;
     }
 
-    Ok(AppState::new_with_job(
+    let mut state = AppState::new_with_job(
         conn,
         dir.to_path_buf(),
         proxy,
         Box::new(XrayLauncher { job: job.clone() }),
         job,
-    ))
+    );
+    // The production state is still uniquely owned here, so install the
+    // bundled asset directory without widening the public constructors.
+    if let Some(inner) = Arc::get_mut(&mut state.inner) {
+        inner.asset_dir = asset_dir;
+    }
+    Ok(state)
 }
 
 fn exclusions(settings: &Settings) -> Vec<String> {
