@@ -350,8 +350,11 @@ pub fn bootstrap(
     );
     // The production state is still uniquely owned here, so install the
     // bundled asset directory without widening the public constructors.
-    if let Some(inner) = Arc::get_mut(&mut state.inner) {
-        inner.asset_dir = asset_dir;
+    // A clone before this point would silently drop geo assets, so fail loudly.
+    if let Some(dir) = asset_dir {
+        let inner = Arc::get_mut(&mut state.inner)
+            .expect("bootstrap state must be uniquely owned when installing asset_dir");
+        inner.asset_dir = Some(dir);
     }
     Ok(state)
 }
