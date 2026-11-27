@@ -43,6 +43,7 @@ export type AppStore = {
   update: UpdateInfo | null;
   updateInstalling: boolean;
   updateProgress: UpdateProgressEvent | null;
+  clientVersion: string | null;
   setSubscriptions: (subscriptions: Subscription[]) => void;
   setServiceProfiles: (serviceProfiles: ServiceProfile[]) => void;
   setProfiles: (profiles: Profile[]) => void;
@@ -58,6 +59,7 @@ export type AppStore = {
   setUpdate: (update: UpdateInfo | null) => void;
   setUpdateInstalling: (installing: boolean) => void;
   setUpdateProgress: (progress: UpdateProgressEvent | null) => void;
+  setClientVersion: (version: string | null) => void;
 };
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -79,6 +81,7 @@ export const useAppStore = create<AppStore>((set) => ({
   update: null,
   updateInstalling: false,
   updateProgress: null,
+  clientVersion: null,
   setSubscriptions: (subscriptions) => set({ subscriptions }),
   setServiceProfiles: (serviceProfiles) => set({ serviceProfiles }),
   setProfiles: (profiles) => set({ profiles }),
@@ -152,6 +155,7 @@ export const useAppStore = create<AppStore>((set) => ({
   setUpdate: (update) => set({ update }),
   setUpdateInstalling: (updateInstalling) => set({ updateInstalling }),
   setUpdateProgress: (updateProgress) => set({ updateProgress }),
+  setClientVersion: (clientVersion) => set({ clientVersion }),
 }));
 
 /** Subscribe to backend progress events. Payloads are validated before use. */

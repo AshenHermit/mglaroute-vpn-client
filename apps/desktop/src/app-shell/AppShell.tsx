@@ -1,5 +1,6 @@
 import { ProfileSchema, SubscriptionSchema } from "@mglaroute/contracts";
 import { useEffect, useState } from "react";
+import { z } from "zod";
 import { ConnectionPanel } from "../features/connection-panel/ConnectionPanel";
 import { invoke } from "../lib/invoke";
 import Servers from "../pages/Servers";
@@ -19,6 +20,7 @@ export function AppShell() {
   const setSubscriptions = useAppStore((store) => store.setSubscriptions);
   const setProfiles = useAppStore((store) => store.setProfiles);
   const setNotice = useAppStore((store) => store.setNotice);
+  const setClientVersion = useAppStore((store) => store.setClientVersion);
   const [view, setView] = useState<"servers" | "settings">("servers");
   const [bottomTab, setBottomTab] = useState<BottomTab>("connect");
 
@@ -39,10 +41,17 @@ export function AppShell() {
         // Error text may carry link data; show only a fixed, safe message.
         if (active) setNotice("Could not load servers");
       });
+    void invoke("app_version", z.string())
+      .then((version) => {
+        if (active) setClientVersion(version);
+      })
+      .catch(() => {
+        // No notice: native error text must never reach the UI.
+      });
     return () => {
       active = false;
     };
-  }, [setSubscriptions, setProfiles, setNotice]);
+  }, [setSubscriptions, setProfiles, setNotice, setClientVersion]);
 
   // Portrait nav tracks the last tap, not scroll position. `scrollIntoView` is
   // optional so jsdom (and any WebView without it) never throws on a nav tap.

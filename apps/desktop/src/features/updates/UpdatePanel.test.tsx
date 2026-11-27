@@ -42,26 +42,34 @@ describe("UpdatePanel", () => {
         updateProgress: null,
         notice: null,
         noticeVariant: "info",
+        clientVersion: null,
       });
     });
   });
 
   afterEach(cleanup);
 
-  it("shows a calm message when no update is available", () => {
-    render(<UpdatePanel />);
-
-    expect(screen.getByText("No update available")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /install|release/i })).toBeNull();
-  });
-
-  it("shows the version and notes with an Install update button", () => {
+  it("shows a calm message and the current version when no update is available", () => {
     act(() => {
-      useAppStore.setState({ update: info });
+      useAppStore.setState({ clientVersion: "0.2.2" });
     });
 
     render(<UpdatePanel />);
 
+    expect(screen.getByText("No update available")).toBeTruthy();
+    expect(screen.getByText("Current version 0.2.2")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /install|release/i })).toBeNull();
+  });
+
+  it("shows the current and available versions with an Install update button", () => {
+    act(() => {
+      useAppStore.setState({ update: info, clientVersion: "0.2.2" });
+    });
+
+    render(<UpdatePanel />);
+
+    expect(screen.getByText("Current version 0.2.2")).toBeTruthy();
+    expect(screen.getByText("Version 0.2.0")).toBeTruthy();
     expect(screen.getByText(/0\.2\.0/)).toBeTruthy();
     expect(screen.getByText(info.notes ?? "")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Install update" })).toBeTruthy();
