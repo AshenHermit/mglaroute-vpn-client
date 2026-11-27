@@ -523,9 +523,11 @@ pub async fn auto_test_loop(state: AppState) {
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        let settings = {
+        let Ok(settings) = ({
             let conn = state.inner.conn.lock().await;
-            settings_repo::get(&conn).unwrap_or_default()
+            settings_repo::get(&conn)
+        }) else {
+            continue;
         };
         if settings.auto_test_enabled {
             if let Ok(_permit) = state.probe_permit() {
@@ -1258,6 +1260,32 @@ mod tests {
         assert_eq!(
             missing_server_target(&conn, Some("p-gone"), &event).expect("select target"),
             Some("p-1".to_string())
+        );
+    }
+
+    #[test]
+    fn missing_server_target_ignores_persisted_failed_service() {
+        let conn = conn_with_profiles();
+        service_profile_repo::insert(
+            &conn,
+            &ServiceProfile {
+                id: "svc-active".to_string(),
+                name: "active".to_string(),
+                test_urls: json!(["https://service.test"]).to_string(),
+                is_enabled: true,
+                ..Default::default()
+            },
+        )
+        .expect("insert service profile");
+        profile_repo::set_result(&conn, "p-1", Some(5), false, Utc::now()).expect("seed result");
+        profile_repo::upsert_service_result(&conn, "p-1", "svc-active", false, Utc::now())
+            .expect("seed failed service result");
+
+        let event = done_event("p-best", Some(10), &[("svc-active", true)]);
+        assert_eq!(
+            missing_server_target(&conn, Some("p-gone"), &event).expect("select target"),
+            Some("p-best".to_string()),
+            "a stale faster server failing an active service must not win"
         );
     }
 

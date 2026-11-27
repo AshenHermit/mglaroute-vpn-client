@@ -135,6 +135,7 @@ pub(crate) fn missing_server_target(
     }
     Ok(pool
         .into_iter()
+        .filter(|(_, latency, passes)| *passes && *latency < u64::MAX)
         .min_by(|left, right| (left.1, &left.0).cmp(&(right.1, &right.0)))
         .map(|(id, _, _)| id))
 }
@@ -365,18 +366,19 @@ async fn run_impl_inner(
 pub async fn probe_run(state: State<'_, AppState>) -> Result<ProbeOutcome, CommandError> {
     let _permit = state.probe_permit()?;
     let cancel = state.start_probe();
-    // Read before the cycle: `run_impl` holds no DB lock while xray runs.
-    // A missing settings row means no emergency switch, not a broken cycle.
-    let settings = {
-        let conn = state.inner.conn.lock().await;
-        settings_repo::get(&conn).unwrap_or_default()
-    };
-    let result = run_impl(
-        &state,
-        false,
-        cancel,
-        &ReconnectProgress::new(AppState::clone(&state), settings),
-    )
+    let result = async {
+        let settings = {
+            let conn = state.inner.conn.lock().await;
+            settings_repo::get(&conn)?
+        };
+        run_impl(
+            &state,
+            false,
+            cancel,
+            &ReconnectProgress::new(AppState::clone(&state), settings),
+        )
+        .await
+    }
     .await;
     state.finish_probe();
     result
