@@ -1,4 +1,5 @@
 pub mod anti_dpi;
+pub mod bypass;
 pub mod commands;
 pub mod core;
 pub mod lifecycle;

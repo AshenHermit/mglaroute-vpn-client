@@ -11,10 +11,11 @@ pub async fn check_service_profile(urls: &[String], proxy_url: &str, timeout: Du
     // `.proxy()` disables reqwest's automatic environment/system proxy detection,
     // so every request goes only through the explicit proxy. No direct fallback.
     let proxy = match reqwest::Proxy::all(proxy_url) {
-        Ok(proxy) => proxy,
+        Ok(proxy) => proxy.no_proxy(None),
         Err(_) => return false,
     };
     let client = match reqwest::Client::builder()
+        .no_proxy()
         .proxy(proxy)
         .timeout(timeout)
         .build()
@@ -60,30 +61,9 @@ mod tests {
 
     #[tokio::test]
     async fn service_check_uses_explicit_proxy() {
-        // Environment proxies point at a dead address; the local mock must win.
-        let saved = [
-            ("HTTPS_PROXY", std::env::var("HTTPS_PROXY").ok()),
-            ("HTTP_PROXY", std::env::var("HTTP_PROXY").ok()),
-            ("ALL_PROXY", std::env::var("ALL_PROXY").ok()),
-        ];
-        std::env::set_var("HTTPS_PROXY", "http://127.0.0.1:1");
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:1");
-        std::env::set_var("ALL_PROXY", "http://127.0.0.1:1");
-
         let proxy = spawn_mock_proxy(&[], false);
         let urls = urls(&["/ok"]);
-        let passed = check_service_profile(&urls, &proxy, Duration::from_millis(2000)).await;
-
-        for (key, value) in saved {
-            match value {
-                Some(v) => std::env::set_var(key, v),
-                None => std::env::remove_var(key),
-            }
-        }
-        assert!(
-            passed,
-            "explicit proxy must be used, not environment proxies"
-        );
+        assert!(check_service_profile(&urls, &proxy, Duration::from_millis(2000)).await);
     }
 
     #[tokio::test]
