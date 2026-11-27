@@ -28,6 +28,7 @@ use crate::storage::models::Settings;
 use crate::storage::repos::{settings_repo, subscription_repo};
 
 pub mod connection;
+pub mod feed;
 pub mod probe;
 pub mod service_profile;
 pub mod settings;
@@ -35,6 +36,7 @@ pub mod subscription;
 pub mod update;
 
 pub use connection::{connection_connect, connection_disconnect, connection_status};
+pub use feed::feed_services;
 pub use probe::{best_eligible_profile, probe_cancel, probe_run, profile_list};
 pub use service_profile::{
     service_profile_create, service_profile_list, service_profile_remove, service_profile_update,
@@ -961,6 +963,7 @@ mod tests {
                 "connection_connect",
                 "connection_disconnect",
                 "connection_status",
+                "feed_services",
                 "probe_cancel",
                 "probe_run",
                 "profile_list",

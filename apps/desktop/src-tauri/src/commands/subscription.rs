@@ -79,6 +79,28 @@ fn validate_url(url: &str) -> Result<(), CommandError> {
     }
 }
 
+fn apply_subscription_patch(
+    mut value: Subscription,
+    name: Option<String>,
+    url: Option<String>,
+    enabled: Option<bool>,
+    auto_refetch_minutes: Option<i64>,
+) -> Subscription {
+    if let Some(name) = name {
+        value.name = name;
+    }
+    if let Some(url) = url {
+        value.url = url;
+    }
+    if let Some(enabled) = enabled {
+        value.enabled = enabled;
+    }
+    if let Some(minutes) = auto_refetch_minutes {
+        value.auto_refetch_minutes = minutes;
+    }
+    value
+}
+
 fn new_id(url: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -212,19 +234,8 @@ pub async fn subscription_update(
     }
 
     let conn = state.inner.conn.lock().await;
-    let mut value = subscription_repo::get(&conn, &id)?.ok_or(CommandError::NotFound)?;
-    if let Some(name) = name {
-        value.name = name;
-    }
-    if let Some(url) = url {
-        value.url = url;
-    }
-    if let Some(enabled) = enabled {
-        value.enabled = enabled;
-    }
-    if let Some(minutes) = auto_refetch_minutes {
-        value.auto_refetch_minutes = minutes;
-    }
+    let value = subscription_repo::get(&conn, &id)?.ok_or(CommandError::NotFound)?;
+    let value = apply_subscription_patch(value, name, url, enabled, auto_refetch_minutes);
     subscription_repo::update(&conn, &value)?;
     Ok(value.into())
 }
@@ -250,4 +261,32 @@ pub async fn subscription_refresh(
 ) -> Result<RefreshResultPayload, CommandError> {
     let _permit = state.permit()?;
     refresh_impl(&state, &id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_patch_preserves_omitted_fields() {
+        let base = Subscription {
+            id: "sub-1".to_string(),
+            name: "old".to_string(),
+            url: "https://old.example/sub".to_string(),
+            enabled: true,
+            auto_refetch_minutes: 60,
+            ..Default::default()
+        };
+        let patched = apply_subscription_patch(
+            base,
+            Some("new".to_string()),
+            Some("https://new.example/sub".to_string()),
+            None,
+            None,
+        );
+        assert_eq!(patched.name, "new");
+        assert_eq!(patched.url, "https://new.example/sub");
+        assert!(patched.enabled);
+        assert_eq!(patched.auto_refetch_minutes, 60);
+    }
 }
