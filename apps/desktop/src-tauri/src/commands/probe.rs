@@ -8,7 +8,7 @@ use serde_json::json;
 use tauri::State;
 use tokio::sync::watch;
 
-use super::connection::{connect_impl, disconnect_impl};
+use super::connection::connect_impl;
 use super::{AppState, CommandError, ConnectionStatus};
 use crate::probe::cycle::{
     persist_probe_samples, probe_cycle_detached, PersistOptions, ProbeOutcome, ProbeProgress,
@@ -159,9 +159,6 @@ pub(crate) async fn apply_reconnect(
             connect_impl(state, Some(profile_id)).await?;
             let mut runtime = state.inner.runtime.lock().await;
             runtime.last_switch = Some(now);
-        }
-        ReconnectDecision::Disconnect => {
-            disconnect_impl(state).await?;
         }
         ReconnectDecision::None => {}
     }
