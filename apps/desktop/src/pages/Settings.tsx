@@ -8,16 +8,23 @@ import {
   TabsList,
   TabsTrigger,
 } from "../components/ui/tabs";
+import { RoutingEditor } from "../features/routing-editor/RoutingEditor";
 import { ServiceProfileEditor } from "../features/service-profile-editor/ServiceProfileEditor";
 import { SettingsForm } from "../features/settings-form/SettingsForm";
 import { SubscriptionList } from "../features/subscription-list/SubscriptionList";
 import { UpdatePanel } from "../features/updates/UpdatePanel";
 
-type SettingsTab = "subscriptions" | "serviceProfiles" | "settings" | "updates";
+type SettingsTab =
+  | "subscriptions"
+  | "serviceProfiles"
+  | "routing"
+  | "settings"
+  | "updates";
 
 const tabs: ReadonlyArray<{ value: SettingsTab; label: string }> = [
   { value: "subscriptions", label: "Subscriptions" },
   { value: "serviceProfiles", label: "Service profiles" },
+  { value: "routing", label: "Routing" },
   { value: "settings", label: "Settings" },
   { value: "updates", label: "Updates" },
 ];
@@ -34,7 +41,7 @@ export default function Settings() {
         onValueChange={(value) => setTab(value as SettingsTab)}
         className="flex min-h-0 flex-1 flex-col"
       >
-        <TabsList className="grid shrink-0 grid-cols-4 gap-1 border-b border-border p-2">
+        <TabsList className="grid shrink-0 grid-cols-5 gap-1 border-b border-border p-2">
           <TabsHighlight className="rounded-md bg-muted">
             {tabs.map(({ value, label }) => (
               <TabsHighlightItem key={value} value={value} className="min-h-11">
@@ -55,6 +62,9 @@ export default function Settings() {
           </TabsContent>
           <TabsContent value="serviceProfiles">
             <ServiceProfileEditor />
+          </TabsContent>
+          <TabsContent value="routing">
+            <RoutingEditor />
           </TabsContent>
           <TabsContent value="settings">
             <SettingsForm />

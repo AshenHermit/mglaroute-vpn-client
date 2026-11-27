@@ -23,6 +23,9 @@ vi.mock("../features/service-profile-editor/ServiceProfileEditor", () => ({
 vi.mock("../features/settings-form/SettingsForm", () => ({
   SettingsForm: () => <div data-testid="settings-marker" />,
 }));
+vi.mock("../features/routing-editor/RoutingEditor", () => ({
+  RoutingEditor: () => <div data-testid="routing-marker" />,
+}));
 
 import { invoke } from "../lib/invoke";
 import { useAppStore } from "../stores/app.store";
@@ -31,7 +34,7 @@ import { AppShell } from "../app-shell/AppShell";
 const mockedInvoke = vi.mocked(invoke);
 
 const settingsTabsVisible = () =>
-  ["Subscriptions", "Service profiles", "Settings", "Updates"].every((name) =>
+  ["Subscriptions", "Service profiles", "Routing", "Settings", "Updates"].every((name) =>
     Boolean(screen.queryByRole("tab", { name })),
   );
 
@@ -62,6 +65,17 @@ describe("Settings page navigation", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByTestId("rail-zone")).toBeTruthy();
     expect(screen.getByTestId("bottom-nav")).toBeTruthy();
+  });
+
+  it("shows a five-column Routing tab and renders its editor", () => {
+    render(<AppShell />);
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+
+    expect(screen.getByRole("tablist").className).toContain("grid-cols-5");
+    expect(screen.getByRole("tablist").className).not.toContain("grid-cols-4");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Routing" }));
+    expect(screen.getByTestId("routing-marker")).toBeTruthy();
   });
 
   it("opens the same settings page from the bottom-nav More tab", () => {

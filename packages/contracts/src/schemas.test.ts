@@ -7,6 +7,8 @@ import {
   ProbeResultSchema,
   ProbeServerEventSchema,
   RefreshResultSchema,
+  RoutingProfileSchema,
+  RoutingRuleSchema,
   ServiceProfileSchema,
   SettingsPatchSchema,
   SettingsSchema,
@@ -196,6 +198,61 @@ describe("contract schemas", () => {
       status: "unsupported",
     });
     expect(() => AntiDpiStatusSchema.parse({ status: "enabled" })).toThrow();
+  });
+
+  it("parses a routing profile payload", () => {
+    expect(
+      RoutingProfileSchema.parse({
+        id: "rp-1",
+        name: "Bypass local",
+        enabled: true,
+        isActive: false,
+        sort: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    ).toEqual({
+      id: "rp-1",
+      name: "Bypass local",
+      enabled: true,
+      isActive: false,
+      sort: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    expect(() =>
+      RoutingProfileSchema.parse({
+        id: "rp-1",
+        name: "Bypass local",
+        enabled: true,
+        is_active: false,
+        sort: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    ).toThrow();
+  });
+
+  it("parses routing rules with proxy/direct/block and rejects unknown outbound", () => {
+    const base = {
+      id: "rr-1",
+      profileId: "rp-1",
+      remark: "Private networks",
+      enabled: true,
+      domains: ["reg.ru", "geosite:private"],
+      ips: ["geoip:private", "10.0.0.0/8"],
+      sort: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    for (const outbound of ["proxy", "direct", "block"] as const) {
+      expect(RoutingRuleSchema.parse({ ...base, outbound }).outbound).toBe(outbound);
+    }
+    expect(RoutingRuleSchema.parse({ ...base, outbound: "block" }).domains).toEqual([
+      "reg.ru",
+      "geosite:private",
+    ]);
+    expect(() => RoutingRuleSchema.parse({ ...base, outbound: "tunnel" })).toThrow();
   });
 
   it("parses update info with camelCase fields", () => {

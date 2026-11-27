@@ -57,6 +57,31 @@ export type ServiceProfile = z.infer<typeof ServiceProfileSchema>;
 
 const testConcurrency = z.number().int().min(1).max(20);
 
+export const RoutingProfileSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  enabled: z.boolean(),
+  isActive: z.boolean(),
+  sort: z.number().int(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+export type RoutingProfile = z.infer<typeof RoutingProfileSchema>;
+
+export const RoutingRuleSchema = z.object({
+  id: z.string(),
+  profileId: z.string(),
+  remark: z.string(),
+  enabled: z.boolean(),
+  outbound: z.enum(["proxy", "direct", "block"]),
+  domains: z.array(z.string()),
+  ips: z.array(z.string()),
+  sort: z.number().int(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+export type RoutingRule = z.infer<typeof RoutingRuleSchema>;
+
 export const SettingsSchema = z.object({
   autoRefetchEnabled: z.boolean(),
   refetchIntervalMinutes: z.number().int(),
