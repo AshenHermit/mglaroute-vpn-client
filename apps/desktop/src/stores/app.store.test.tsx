@@ -57,6 +57,13 @@ const server: Profile = {
   updatedAt: "2026-11-24T00:00:00Z",
 };
 
+const importedServer: Profile = {
+  ...server,
+  id: "p-2",
+  serverId: "p-2",
+  remarks: "node 2",
+};
+
 function eventHandler(event: string) {
   return mockedListen.mock.calls.find(([name]) => name === event)?.[1];
 }
@@ -84,12 +91,16 @@ describe("app store backend events", () => {
       updateProgress: null,
     });
     let subscriptionListCalls = 0;
+    let profileListCalls = 0;
     mockedInvoke.mockImplementation(async (command) => {
       if (command === "subscription_list") {
         subscriptionListCalls += 1;
         return (subscriptionListCalls === 1 ? [activeFeed] : [errorFeed]) as never;
       }
-      if (command === "profile_list") return [server] as never;
+      if (command === "profile_list") {
+        profileListCalls += 1;
+        return (profileListCalls === 1 ? [server] : [importedServer]) as never;
+      }
       if (command === "probe_cancel") return true as never;
       if (command === "anti_dpi_status") return { status: "unsupported" } as never;
       if (command === "connection_status") {
@@ -134,6 +145,38 @@ describe("app store backend events", () => {
     await waitFor(() =>
       expect(useAppStore.getState().subscriptions[0]?.status).toBe("error"),
     );
+  });
+
+  it("subscription_refreshed_event_reloads_profiles", async () => {
+    render(<App />);
+
+    await waitFor(() =>
+      expect(
+        mockedInvoke.mock.calls.filter(([command]) => command === "profile_list"),
+      ).toHaveLength(1),
+    );
+
+    const handler = eventHandler("subscription-refreshed");
+    expect(handler).toBeTypeOf("function");
+
+    act(() => {
+      handler?.({
+        payload: {
+          subscriptionId: "sub-1",
+          added: 1,
+          updated: 0,
+          absent: 0,
+          badLines: 0,
+        },
+      } as never);
+    });
+
+    await waitFor(() =>
+      expect(
+        mockedInvoke.mock.calls.filter(([command]) => command === "profile_list"),
+      ).toHaveLength(2),
+    );
+    expect(useAppStore.getState().profiles[0]?.remarks).toBe("node 2");
   });
 
   it("shows per-server testing and disables Run test", async () => {
