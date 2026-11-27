@@ -217,9 +217,19 @@ pub fn reap_orphans(temp_dir: &Path, cutoff: Option<SystemTime>) -> io::Result<u
     )
 }
 
+/// `OpenProcess` returns `ERROR_INVALID_PARAMETER` for a PID that no longer
+/// exists. Other failures (notably access denied) must stay conservative so a
+/// live core with a recycled PID is never treated as dead.
+pub fn open_process_failure_means_dead(error_code: u32) -> bool {
+    const ERROR_INVALID_PARAMETER: u32 = 87;
+    error_code == ERROR_INVALID_PARAMETER
+}
+
 #[cfg(windows)]
 fn is_probe_process_alive(pid: u32) -> bool {
-    use windows_sys::Win32::Foundation::{CloseHandle, FALSE, STILL_ACTIVE, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, FALSE, STILL_ACTIVE, WAIT_OBJECT_0,
+    };
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, WaitForSingleObject,
         PROCESS_QUERY_LIMITED_INFORMATION,
@@ -227,8 +237,10 @@ fn is_probe_process_alive(pid: u32) -> bool {
 
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
-        // Conservatively keep the sidecar: verification will still decide.
-        return true;
+        // A gone PID is safe to clean without verification; an inaccessible
+        // live PID stays for the verification path.
+        let error_code = unsafe { GetLastError() };
+        return !open_process_failure_means_dead(error_code);
     }
     let exited = unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0;
     let mut exit_code = 0u32;

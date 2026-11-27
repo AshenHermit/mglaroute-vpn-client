@@ -180,7 +180,9 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime};
     use std::{env, process::Command};
 
-    use crate::core::job::{reap_orphans_with, reap_orphans_with_liveness, JobHandle};
+    use crate::core::job::{
+        open_process_failure_means_dead, reap_orphans_with, reap_orphans_with_liveness, JobHandle,
+    };
     use crate::core::snapshot::snapshot_for;
     use crate::storage::models::Profile;
 
@@ -375,6 +377,14 @@ mod tests {
         assert_eq!(killed.get(), 0);
         assert!(!pid_path.exists());
         assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn open_process_failure_classifies_dead_pid_without_loosening_access_denied() {
+        // ERROR_INVALID_PARAMETER means the PID no longer exists. Other
+        // failures (e.g. ERROR_ACCESS_DENIED) must stay conservative.
+        assert!(open_process_failure_means_dead(87));
+        assert!(!open_process_failure_means_dead(5));
     }
 
     #[test]
