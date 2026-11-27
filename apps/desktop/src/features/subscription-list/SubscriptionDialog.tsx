@@ -4,7 +4,7 @@ import {
   type FeedService,
   type Subscription,
 } from "@mglaroute/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
@@ -124,9 +124,8 @@ export function SubscriptionDialog({
   );
   const [form, setForm] = useState<FeedForm>(feedFormFromUrl(subscription?.url));
   const [services, setServices] = useState<FeedService[] | null>(null);
-  const [generatedUrl, setGeneratedUrl] = useState(
-    isFeedUrl(subscription?.url) ? subscription!.url : "",
-  );
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (tab !== "mglaroute" || services !== null) return;
@@ -152,14 +151,15 @@ export function SubscriptionDialog({
     }));
   };
 
+  const generatedUrl = buildFeedUrl(form);
+
   const generate = () => {
-    const next = buildFeedUrl(form);
-    setGeneratedUrl(next);
-    setUrl(next);
+    setUrl(generatedUrl);
   };
 
   const save = async () => {
-    const trimmed = url.trim();
+    if (savingRef.current) return;
+    const trimmed = (tab === "mglaroute" ? generatedUrl : url).trim();
     if (!trimmed) {
       setNotice("Subscription URL is required");
       return;
@@ -168,6 +168,8 @@ export function SubscriptionDialog({
       setNotice("Name is required");
       return;
     }
+    savingRef.current = true;
+    setSaving(true);
     try {
       const saved =
         mode === "edit"
@@ -184,6 +186,9 @@ export function SubscriptionDialog({
       onSaved(saved);
     } catch {
       setNotice(mode === "add" ? "Could not add subscription" : "Could not update subscription");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -371,7 +376,7 @@ export function SubscriptionDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void save()}>
+          <Button onClick={() => void save()} disabled={saving}>
             {mode === "add" ? "Add subscription" : "Save changes"}
           </Button>
         </div>

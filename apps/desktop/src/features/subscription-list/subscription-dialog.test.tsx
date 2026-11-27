@@ -123,9 +123,44 @@ describe("SubscriptionDialog", () => {
     await waitFor(() => expect(saved).toHaveBeenCalledWith(expect.objectContaining({ url: generated })));
   });
 
+  it("saves the edited feed form without requiring Generate link", async () => {
+    mockedInvoke.mockImplementation(async (command, _schema, args) => {
+      if (command === "feed_services") return [] as never;
+      if (command === "subscription_update") return { ...subscription, ...args } as never;
+      return [] as never;
+    });
+    const saved = vi.fn();
+    render(
+      <SubscriptionDialog
+        open
+        mode="edit"
+        subscription={{ ...subscription, url: feedUrl }}
+        onClose={vi.fn()}
+        onSaved={saved}
+      />,
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Search"), { target: { value: "beta" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "subscription_update",
+        SubscriptionSchema,
+        expect.objectContaining({
+          url: "https://api.mglaroute.ashen-hermit.space/api/feed?format=subscription&search=beta&protocol=vless&reachable=true&anycast=false&services=svc-1%2Csvc-2&sort=latency_desc&limit=50",
+        }),
+      ),
+    );
+    expect(saved).toHaveBeenCalled();
+  });
+
   it("keeps the feed form usable when feed_services fails", async () => {
-    mockedInvoke.mockImplementation(async (command) => {
+    const generated =
+      "https://api.mglaroute.ashen-hermit.space/api/feed?format=subscription&sort=latency_asc&limit=200";
+    const saved = vi.fn();
+    mockedInvoke.mockImplementation(async (command, _schema, args) => {
       if (command === "feed_services") throw { fetch: null };
+      if (command === "subscription_add") return { ...subscription, id: "sub-2", ...args } as never;
       return [] as never;
     });
     render(
@@ -134,7 +169,7 @@ describe("SubscriptionDialog", () => {
         mode="add"
         subscription={null}
         onClose={vi.fn()}
-        onSaved={vi.fn()}
+        onSaved={saved}
       />,
     );
     const dialog = within(screen.getByRole("dialog"));
@@ -143,9 +178,41 @@ describe("SubscriptionDialog", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("feed_services", FeedServiceListSchema),
     );
     fireEvent.click(dialog.getByRole("button", { name: "Generate link" }));
-    expect((dialog.getByLabelText("Generated feed URL") as HTMLInputElement).value).toBe(
-      "https://api.mglaroute.ashen-hermit.space/api/feed?format=subscription&sort=latency_asc&limit=200",
+    expect((dialog.getByLabelText("Generated feed URL") as HTMLInputElement).value).toBe(generated);
+    fireEvent.click(dialog.getByRole("button", { name: "Add subscription" }));
+    await waitFor(() => expect(saved).toHaveBeenCalledWith(expect.objectContaining({ url: generated })));
+  });
+
+  it("ignores repeated save clicks while a save is in flight", async () => {
+    let resolveAdd: ((value: Subscription) => void) | null = null;
+    mockedInvoke.mockImplementation(async (command, _schema, args) => {
+      if (command === "subscription_add") {
+        return await new Promise<Subscription>((resolve) => {
+          resolveAdd = resolve;
+        });
+      }
+      return [] as never;
+    });
+    const saved = vi.fn();
+    render(
+      <SubscriptionDialog
+        open
+        mode="add"
+        subscription={null}
+        onClose={vi.fn()}
+        onSaved={saved}
+      />,
     );
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Subscription URL"), {
+      target: { value: "https://feed.example/sub" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: "Add subscription" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Add subscription" }));
+    expect(resolveAdd).not.toBeNull();
+    resolveAdd!({ ...subscription, id: "sub-2" });
+    await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+    expect(mockedInvoke).toHaveBeenCalledTimes(1);
   });
 
   it("validates before saving and omits blank name on add", async () => {
