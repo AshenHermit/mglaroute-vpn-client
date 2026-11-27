@@ -98,7 +98,8 @@ needs a published signed release with a newer version. All steps are manual.
    Expected: active profile stays on the faster server while the cooldown has
    not elapsed; after the cooldown the best eligible server is selected. A
    current server that stops passing all active service profiles is replaced
-   regardless of cooldown; with no passing server the connection is dropped.
+   regardless of cooldown when a passing candidate exists; with no passing
+   server the connection stays up.
    The auto-test tick runs every 60 s.
 
 10. **Fresh import → Connect works without a test.** (binary, Windows, network)
@@ -180,6 +181,25 @@ needs a published signed release with a newer version. All steps are manual.
     system browser via Rust `shell::open`, not the WebView. No download/install
     runs and proxy/core state is unchanged; a failed install leaves the button
     clickable again.
+
+18. **Remove the connected server from the feed → no drop, then probe
+    switch.** (binary, Windows, network)
+    Connect to a server (step 4), remove that server's link from the
+    subscription source, then **Refresh** on **Subscriptions**.
+    Expected: the card stays `Connected`, the working xray core keeps running,
+    the registry proxy is unchanged, and the card shows
+    `Connected server (not in list)` with that server's id — never
+    `No active server`, even though the row is gone from **Servers**.
+    With **Auto reconnect** off, click **Run test**: no switch while another
+    server passes. Turn **Auto reconnect** on, make all test URLs fail so no
+    server passes, and run **Run test**: the connection still stays up (no
+    `Disconnect` state, no proxy restore). Restore a passing URL, run **Run
+    test** again: the first `probe-server(done)` for a passing, eligible server
+    switches the connection immediately to the best eligible server without a
+    `Disconnected` state or proxy teardown. A present current server or a
+    failing sample does not trigger that switch. Separately confirm `v<version>`
+    beside the rail title and `Current version <version>` in **Settings →
+    Updates**; a failed version lookup shows no error notice.
 
 ## Not covered by this checklist
 

@@ -19,7 +19,8 @@ pub enum ReconnectDecision {
 /// `candidates` is `(profile_id, latency_ms, passes_all_active_profiles)`.
 /// Only passing candidates are eligible. The best one has the lowest latency
 /// (profile id breaks ties). A current profile that fails the filters is
-/// replaced immediately, ignoring cooldown. Enabling the feature and
+/// replaced immediately, ignoring cooldown, only when a passing candidate
+/// exists; with none the live connection is kept. Enabling the feature and
 /// persisting the switch time are the caller's responsibility.
 pub fn decide_reconnect(
     current_id: Option<&str>,
