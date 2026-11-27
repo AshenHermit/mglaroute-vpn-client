@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AntiDpiStatusSchema,
   ConnectionStateSchema,
+  EVENTS,
   ProfileSchema,
   ProbeResultSchema,
   ProbeServerEventSchema,
@@ -10,6 +11,8 @@ import {
   SettingsPatchSchema,
   SettingsSchema,
   SubscriptionSchema,
+  UpdateInfoSchema,
+  UpdateProgressEventSchema,
 } from "./index";
 
 const timestamp = "2026-01-01T00:00:00Z";
@@ -193,5 +196,25 @@ describe("contract schemas", () => {
       status: "unsupported",
     });
     expect(() => AntiDpiStatusSchema.parse({ status: "enabled" })).toThrow();
+  });
+
+  it("parses update info with camelCase fields", () => {
+    expect(UpdateInfoSchema.parse({
+      version: "0.2.0",
+      currentVersion: "0.1.0",
+      notes: "fixes",
+      pubDate: "2026-11-26T00:00:00Z",
+      canInstallInApp: true,
+      releaseUrl: "https://github.com/AshenHermit/mglaroute-vpn-client/releases/tag/v0.2.0",
+    })).toMatchObject({ version: "0.2.0", canInstallInApp: true });
+  });
+
+  it("rejects snake_case update payloads and unknown progress phases", () => {
+    expect(() => UpdateInfoSchema.parse({ version: "0.2.0", current_version: "0.1.0" })).toThrow();
+    expect(() => UpdateProgressEventSchema.parse({ phase: "unknown", received: 1, total: null })).toThrow();
+  });
+
+  it("maps the update progress event name", () => {
+    expect(EVENTS.updateProgress).toBe("update-progress");
   });
 });

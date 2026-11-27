@@ -10,6 +10,12 @@ connect/disconnect with restore-on-crash and startup restore. Linux, Android and
 iOS are deferred. Design: `docs/superpowers/specs/2026-11-24-mglaroute-vpn-client-design.md`.
 Manual end-to-end pass: `docs/e2e-checklist.md`.
 
+Release + in-app updater pass implemented: signed NSIS installer via
+`pnpm installer:build`, tag-triggered GitHub Actions release publishing setup,
+`.sig` and `latest.json`, update check on startup and every 6 h, and an
+`Updates` settings tab with Install / Open release page actions. Design (status
+`accepted`): `docs/superpowers/specs/2026-11-26-release-updater-design.md`.
+
 ## Stack
 
 - pnpm workspace + Nx, Node 20+
@@ -68,6 +74,34 @@ is present in this checkout: `pnpm binaries:verify` fails with
 `ENOENT ... apps\desktop\src-tauri\binaries\xray.exe.sha256`. Fetching is deferred
 to a real build machine with network access; `docs/e2e-checklist.md` requires that
 real binary.
+
+## Releases and updates
+
+`pnpm installer:build` produces a signed NSIS installer locally. Prerequisites:
+network access for `binaries:fetch` (or an already staged checkout), bundled
+binaries that pass `binaries:verify`, and the Tauri signing env
+`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The command
+runs `binaries:fetch`, `binaries:verify`, then
+`pnpm --filter @mglaroute/desktop exec tauri build --bundles nsis`. This is an
+operator smoke test, not a CI-unit step.
+
+To publish: generate the keypair with
+`cargo tauri signer generate -w ~/.tauri/mglaroute.key`, commit the public key to
+`plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json` (currently
+`PUBLIC_KEY_PLACEHOLDER` until supplied), and set repo secrets
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Then push a
+`v<version>` tag matching the `tauri.conf.json` version.
+`.github/workflows/release.yml` builds on `windows-latest`, signs the NSIS
+setup, and publishes the setup, `.sig` and `latest.json`;
+`updaterJsonPreferNsis: true` makes `latest.json` point at the NSIS asset with
+platform key `windows-x86_64`. `XRAY_VERSION` can be pinned as a repo variable
+for reproducible builds.
+
+The client checks `latest.json` on startup and every 6 h. The `Updates` tab
+shows the available version and notes, installs in-app on Windows, and offers
+**Open release page** where in-app install is unavailable. Terminal `done`
+progress is best-effort: the Windows updater may exit before the final event is
+delivered.
 
 ## Known limitations
 

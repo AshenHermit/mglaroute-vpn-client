@@ -3,7 +3,7 @@ name = "mglaroute-client"
 version = "0.1.0"
 description = "mglaroute VPN client"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.90"
 
 [lib]
 name = "mglaroute_client_lib"
@@ -24,6 +24,10 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 futures = "0.3"
 thiserror = "2"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-shell = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

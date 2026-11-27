@@ -16,6 +16,8 @@ const SAFE_CODES = [
   "proxy",
   "probe",
   "unsupported",
+  "update_busy",
+  "update",
 ] as const;
 
 export type CommandErrorCode = (typeof SAFE_CODES)[number];

@@ -42,6 +42,12 @@ pub(crate) fn begin_shutdown() -> bool {
         .is_ok()
 }
 
+/// Release the gate when a terminal action aborts before exit, so a failed
+/// updater install can be retried and tray `Exit` still works afterwards.
+pub(crate) fn abort_shutdown() {
+    SHUTTING_DOWN.store(false, Ordering::SeqCst);
+}
+
 pub(crate) fn setup_tray<R: Runtime>(app: &mut tauri::App<R>) -> tauri::Result<()> {
     let app_handle = app.handle().clone();
     let open = MenuItem::with_id(&app_handle, "open", "Open", true, None::<&str>)?;
@@ -102,10 +108,15 @@ pub(crate) fn hide_on_close<R: Runtime>(window: &tauri::Window<R>, event: &Windo
     }
 }
 
+/// Shared teardown for terminal actions (tray exit, updater install).
+/// Stop the core, restore the captured proxy, drop the temp config.
+/// The Job Object and proxy_previous.json cover a crash or a failed restore.
+pub(crate) async fn cleanup(state: &AppState) {
+    let _ = crate::commands::connection::disconnect_impl(state).await;
+}
+
 pub(crate) async fn shutdown<R: Runtime>(app: AppHandle<R>, state: AppState) {
-    // Stop the core, restore the captured proxy, drop the temp config.
-    // The Job Object and proxy_previous.json cover a crash or a failed restore.
-    let _ = crate::commands::connection::disconnect_impl(&state).await;
+    cleanup(&state).await;
     app.exit(0);
 }
 
@@ -137,6 +148,22 @@ mod tests {
         SHUTTING_DOWN.store(false, Ordering::SeqCst);
     }
 
+    #[test]
+    fn abort_shutdown_restores_gate_after_failed_terminal_action() {
+        SHUTTING_DOWN.store(false, Ordering::SeqCst);
+        assert!(begin_shutdown(), "first install attempt claims the gate");
+        assert!(!begin_shutdown(), "a second attempt is rejected while active");
+
+        abort_shutdown();
+
+        assert!(begin_shutdown(), "failed install must allow a retry");
+        assert!(
+            !begin_shutdown(),
+            "the retried attempt still rejects a third claim"
+        );
+        SHUTTING_DOWN.store(false, Ordering::SeqCst);
+    }
+
     // Wiring against native tray APIs has no headless runtime; these read the
     // production half of this file only, so test literals cannot satisfy them.
     fn production_source() -> &'static str {
@@ -157,13 +184,25 @@ mod tests {
     fn shutdown_source_cleans_up_before_exit() {
         let body = after("async fn shutdown");
         let cleanup = body
-            .find("disconnect_impl")
-            .expect("shutdown must disconnect before exiting");
+            .find("cleanup(&state)")
+            .expect("shutdown must call shared cleanup before exiting");
         let exit = body.find("app.exit(0)").expect("shutdown must exit");
         assert!(cleanup < exit, "cleanup must finish before process exit");
+    }
+
+    #[test]
+    fn update_cleanup_helper_disconnects_before_terminal_action() {
+        let body = after("pub(crate) async fn cleanup")
+            .split('}')
+            .next()
+            .expect("cleanup body must be delimited");
         assert!(
-            body[..exit].contains("let _ ="),
-            "cleanup failure must not block exit and must not be logged"
+            body.contains("disconnect_impl"),
+            "cleanup must disconnect before a terminal action"
+        );
+        assert!(
+            body.contains("let _ ="),
+            "cleanup failure must not block the terminal action and must not be logged"
         );
     }
 

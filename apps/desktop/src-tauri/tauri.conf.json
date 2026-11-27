@@ -29,6 +29,18 @@
     "targets": "all",
     "icon": ["icons/icon.ico"],
     "externalBin": ["binaries/xray"],
-    "resources": ["binaries/antiddpi/**/*"]
+    "resources": ["binaries/antiddpi/**/*"],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "PUBLIC_KEY_PLACEHOLDER",
+      "endpoints": [
+        "https://github.com/AshenHermit/mglaroute-vpn-client/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

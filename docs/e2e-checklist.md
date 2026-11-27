@@ -15,9 +15,13 @@ registry. Run them in this order on Windows desktop.
 - Two test URLs that return 2xx through the proxy and at least one that does not.
 - Record proxy state before step 1: `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`,
   values `ProxyEnable`, `ProxyServer`, `ProxyOverride`, `AutoConfigURL`.
+- For steps 16–17: a published GitHub release newer than the running version with
+  a signed NSIS setup, `.sig` and `latest.json`, and `plugins.updater.pubkey`
+  matching the signing key. The release-page fallback needs only the releases URL.
 
 Legend: **binary** = needs the real bundled xray binary; **Windows** = needs a real
-Windows registry run; **network** = needs live subscription/test URLs. All steps are manual.
+Windows registry run; **network** = needs live subscription/test URLs; **update** =
+needs a published signed release with a newer version. All steps are manual.
 
 ## Steps
 
@@ -156,6 +160,26 @@ Windows registry run; **network** = needs live subscription/test URLs. All steps
     process then ends. Repeat the connect → close → Exit sequence, and try a
     rapid double-click on `Exit`: no second cleanup runs (no error dialog, no
     duplicate proxy restore, no process left behind).
+
+16. **Update notice → Install update updates and restarts cleanly.** (update, Windows)
+    With a newer signed release published, launch the app (or wait for the 6 h
+    check) and open **Settings → Updates**.
+    Expected: a toast announces the new version; the panel shows the available
+    version and notes. Click **Install update**: progress advances through
+    `downloading` → `installing`, and the app closes before the passive NSIS
+    install so the new version can run. Before install, the recorded proxy values
+    are restored, `proxy_previous.json` is removed, no `xray.exe` remains and no
+    `%TEMP%\mglaroute-probe-*` sidecars are left. A second click while installing
+    is a no-op (`update_busy`). The final `done` progress line may never arrive
+    because the Windows updater can exit first — do not read that as failure.
+
+17. **No in-app install → release page opens.** (update, UI)
+    Run a build where `canInstallInApp` is false (mobile seam; Windows currently
+    always true), so **Updates** shows **Open release page**.
+    Expected: clicking it opens the GitHub releases page for `v<version>` in the
+    system browser via Rust `shell::open`, not the WebView. No download/install
+    runs and proxy/core state is unchanged; a failed install leaves the button
+    clickable again.
 
 ## Not covered by this checklist
 
