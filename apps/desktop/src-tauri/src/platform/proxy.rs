@@ -7,6 +7,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::bypass::WININET_BYPASS;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyError {
     #[error("proxy state I/O failed: {0}")]
@@ -49,9 +51,14 @@ pub fn proxy_string(port: u16) -> String {
     format!("127.0.0.1:{port}")
 }
 
-/// WinInet `ProxyOverride` value. `<local>` is always first (loopback bypass).
+/// WinInet `ProxyOverride` value. `<local>` is always first (loopback bypass),
+/// followed by the built-in private-network ranges and the user's exclusions.
 pub fn override_string(exclusions: &[String]) -> String {
     let mut value = String::from("<local>");
+    for entry in WININET_BYPASS {
+        value.push(';');
+        value.push_str(entry);
+    }
     for exclusion in exclusions {
         if exclusion.is_empty() {
             continue;
@@ -178,10 +185,25 @@ mod tests {
 
     #[test]
     fn override_prepends_local() {
-        assert_eq!(
-            override_string(&["example.com".to_string()]),
-            "<local>;example.com"
-        );
+        let value = override_string(&["example.com".to_string()]);
+        assert!(value.starts_with("<local>;"), "got {value}");
+        assert!(value.ends_with(";example.com"), "got {value}");
+    }
+
+    #[test]
+    fn override_bypasses_private_networks() {
+        let value = override_string(&[]);
+        let entries: Vec<&str> = value.split(';').collect();
+        for entry in ["localhost", "127.*", "10.*", "192.168.*"] {
+            assert!(entries.contains(&entry), "{entry} missing from {value}");
+        }
+        for octet in 16..=31 {
+            let entry = format!("172.{octet}.*");
+            assert!(
+                entries.contains(&entry.as_str()),
+                "{entry} missing from {value}"
+            );
+        }
     }
 
     #[test]
@@ -249,13 +271,18 @@ mod tests {
         backend
             .apply(10808, &["example.com".to_string()])
             .expect("apply");
-        assert_eq!(
-            backend.state(),
-            PreviousProxy::Manual {
-                server: "127.0.0.1:10808".to_string(),
-                override_list: "<local>;example.com".to_string(),
+        match backend.state() {
+            PreviousProxy::Manual { server, override_list } => {
+                assert_eq!(server, "127.0.0.1:10808");
+                assert!(
+                    override_list.starts_with("<local>;localhost;127.*;10.*;"),
+                    "built-in private bypass missing: {override_list}"
+                );
+                assert!(override_list.contains("192.168.*"));
+                assert!(override_list.ends_with(";example.com"));
             }
-        );
+            other => panic!("expected manual proxy, got {other:?}"),
+        }
 
         backend.restore(&original).expect("restore");
         assert_eq!(backend.state(), original);

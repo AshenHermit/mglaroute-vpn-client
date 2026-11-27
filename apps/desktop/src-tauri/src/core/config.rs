@@ -3,7 +3,9 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::{storage::models::Profile, subscription::decode::decode_base64};
+use crate::{
+    bypass::XRAY_BYPASS_IPS, storage::models::Profile, subscription::decode::decode_base64,
+};
 
 use super::snapshot::ConfigSnapshot;
 
@@ -363,7 +365,14 @@ pub fn build_probe_config(profile: &Profile, port: u16) -> Result<Value> {
 /// One config for a live connection: single `proxy-in`, profile outbound,
 /// `direct` freedom fallback and bypass rules for `exclusions`.
 pub fn build_connection_config(snapshot: &ConfigSnapshot, exclusions: &[String]) -> Result<Value> {
-    let mut rules = Vec::with_capacity(exclusions.len() + 1);
+    let mut rules = Vec::with_capacity(exclusions.len() + 2);
+    // Local/private destinations must go direct: the remote node cannot reach
+    // the user's LAN, and may answer with a Cloudflare HTTP/HTTPS port error.
+    rules.push(json!({
+        "type": "field",
+        "ip": XRAY_BYPASS_IPS,
+        "outboundTag": "direct",
+    }));
     for domain in exclusions.iter().filter(|domain| !domain.is_empty()) {
         rules.push(json!({
             "type": "field",
@@ -557,11 +566,46 @@ mod tests {
             .expect("routing rules array");
         let bypass = rules
             .iter()
-            .find(|rule| rule["outboundTag"] == "direct")
-            .expect("bypass rule");
+            .find(|rule| rule["field"] == "domain" && rule["outboundTag"] == "direct")
+            .expect("domain bypass rule");
         assert_eq!(bypass["field"], "domain");
         assert_eq!(bypass["domain"][0], "example.com");
         assert!(rules.iter().any(|rule| rule["outboundTag"] == "proxy-out"));
+    }
+
+    #[test]
+    fn connection_config_bypasses_private_networks() {
+        let profile = vless_profile("a", 443);
+        let config = build_connection_config(
+            &snapshot_for(&profile, 10808, Path::new("C:/tmp/xray")),
+            &[],
+        )
+        .expect("connection config");
+
+        let rules = config["routing"]["rules"]
+            .as_array()
+            .expect("routing rules array");
+        let bypass_index = rules
+            .iter()
+            .position(|rule| rule["ip"].is_array() && rule["outboundTag"] == "direct")
+            .expect("private IP bypass rule must exist");
+        let ips = rules[bypass_index]["ip"]
+            .as_array()
+            .expect("bypass ip array");
+        for range in ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"] {
+            assert!(
+                ips.iter().any(|ip| ip == range),
+                "bypass rule must contain {range}"
+            );
+        }
+        let proxy_index = rules
+            .iter()
+            .position(|rule| rule["outboundTag"] == "proxy-out")
+            .expect("catch-all proxy rule");
+        assert!(
+            bypass_index < proxy_index,
+            "private bypass rule must precede the catch-all proxy rule"
+        );
     }
 
     #[test]
