@@ -100,6 +100,7 @@ docs/superpowers/specs/   design docs
 
 ## Verification
 
+- GitHub Actions is the authoritative check on PRs into `main` (`.github/workflows/ci.yml`): jobs `test-js` (`pnpm test`) and `test-rust` (`cargo test` with the test-only `TAURI_CONFIG` override). Both must be green; local runs are optional.
 - `pnpm test` runs Nx projects plus `vitest run scripts` (sha256/asset suites);
   exit code is meaningful. `pnpm build`: set `NX_DAEMON='false'` (Nx daemon flake).
   `Cannot switch to pnpm@9` and zod annotation warnings are pre-existing.
@@ -119,8 +120,10 @@ docs/superpowers/specs/   design docs
   Manual smoke on a real binary (orphan check) is operator-only; see
   `docs/e2e-checklist.md`.
 - `pnpm installer:build` needs network + signing env
-  (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`); operator
-  smoke test only, not a CI-unit step. `pnpm version:set <version>` bumps the
+  (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). The root
+  script loads gitignored `.env` via `dotenv-cli` before fetching, verifying and
+  building; copy `.env.example` to `.env` for local smoke builds. Operator smoke
+  test only, not a CI-unit step. `pnpm version:set <version>` bumps the
   root/desktop packages, `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`
   together; the release tag must equal `v<version>` from `tauri.conf.json`.
   `pnpm vitest run scripts/release-config.test.mjs scripts/set-version.test.mjs`
@@ -187,6 +190,11 @@ docs/superpowers/specs/   design docs
   (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) with a PID sidecar next to its temp config;
   startup reaping kills only PIDs verified as xray with a matching config path.
   `%TEMP%\mglaroute-probe-*` config/sidecar files are removed on stop/exit.
+- No console windows from spawned processes: `core::supervisor::apply_hidden_console`
+  sets Windows `CREATE_NO_WINDOW` (`0x08000000`) on every child — xray cores and
+  the `taskkill`/`tasklist`/`powershell` reaper helpers. GUI installs no longer
+  flash a new console per core during connect or parallel probes; stdout/stderr
+  stay null so raw config never reaches a sink.
 - Server feed is a valid import source: `GET /api/feed?format=subscription` (raw text,
   4 URI schemes). Feed is public, no JWT. `format=json` (scan metadata) consumption
   deferred — MVP imports subscription text only.

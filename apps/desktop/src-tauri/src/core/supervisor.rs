@@ -35,12 +35,36 @@ pub fn binary_path(override_path: Option<&str>) -> PathBuf {
     binary_path_from(exe_dir.as_deref(), override_path, env_path.as_deref())
 }
 
+/// Windows process-creation flags that keep a console child's window hidden.
+pub(crate) fn hidden_console_creation_flags() -> u32 {
+    #[cfg(windows)]
+    {
+        0x0800_0000 // CREATE_NO_WINDOW
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
+
+/// Suppress the console window Windows allocates for a console child of a
+/// GUI process. No-op off Windows.
+pub(crate) fn apply_hidden_console(command: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(hidden_console_creation_flags());
+    }
+    command
+}
+
 /// Build a xray invocation for one snapshot. stdout/stderr go to null so raw
 /// config (which holds credentials) never reaches a log sink.
 pub fn build_command(snapshot: &ConfigSnapshot) -> Result<Command> {
     let mut command = Command::new(binary_path(None));
     command.arg("run").arg("-c").arg(&snapshot.config_path);
     command.stdout(Stdio::null()).stderr(Stdio::null());
+    apply_hidden_console(&mut command);
     Ok(command)
 }
 
@@ -235,6 +259,18 @@ mod tests {
         assert_eq!(args[0], OsStr::new("run"));
         assert_eq!(args[1], OsStr::new("-c"));
         assert_eq!(Path::new(args[2]), snapshot.config_path.as_path());
+    }
+
+    #[test]
+    fn child_process_creation_flags_hide_console_on_windows() {
+        #[cfg(windows)]
+        assert_eq!(
+            hidden_console_creation_flags(),
+            0x0800_0000,
+            "CREATE_NO_WINDOW must be set"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(hidden_console_creation_flags(), 0, "no-op off Windows");
     }
 
     #[test]
