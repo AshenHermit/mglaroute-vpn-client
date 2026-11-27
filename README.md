@@ -87,10 +87,13 @@ operator smoke test, not a CI-unit step.
 
 To publish: generate the keypair with
 `cargo tauri signer generate -w ~/.tauri/mglaroute.key`, commit the public key to
-`plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json` (currently
-`PUBLIC_KEY_PLACEHOLDER` until supplied), and set repo secrets
-`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Then push a
-`v<version>` tag matching the `tauri.conf.json` version.
+`plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`, and set repo
+secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Bump versions with
+`pnpm version:set 0.2.0` — it updates `package.json`, `apps/desktop/package.json`,
+`tauri.conf.json`, `Cargo.toml` and `Cargo.lock` together. Then push a
+`v<version>` tag matching the `tauri.conf.json` version; CI fails early on a
+mismatch.
 `.github/workflows/release.yml` builds on `windows-latest`, signs the NSIS
 setup, and publishes the setup, `.sig` and `latest.json`;
 `updaterJsonPreferNsis: true` makes `latest.json` point at the NSIS asset with

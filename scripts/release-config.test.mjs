@@ -29,6 +29,10 @@ describe("release config wiring", () => {
     contains(script, "tauri build --bundles nsis");
   });
 
+  it("root version:set script synchronizes every release version file", () => {
+    assert.match(rootPackage, /"version:set"\s*:\s*"node scripts\/set-version\.mjs"/);
+  });
+
   it("desktop devDependencies include the Tauri CLI", () => {
     contains(desktopPackage, "@tauri-apps/cli");
   });
@@ -78,6 +82,7 @@ describe("release config wiring", () => {
       "https://github.com/AshenHermit/mglaroute-vpn-client/releases/latest/download/latest.json",
     );
     contains(tauriConfig, '"installMode": "passive"');
-    contains(tauriConfig, "PUBLIC_KEY_PLACEHOLDER");
+    assert.match(tauriConfig, /"pubkey"\s*:\s*"[A-Za-z0-9+/=]+"/);
+    assert.ok(!tauriConfig.includes("PUBLIC_KEY_PLACEHOLDER"));
   });
 });
