@@ -3,6 +3,13 @@
 Status: proposed  
 Date: 2026-11-28
 
+> Acceptance gate: status becomes `accepted` only after an operator has run the
+> manual Android device checklist in `docs/e2e-checklist.md` and confirmed the
+> five Review Focus behaviours on a real API 34+ device. Passing CI and unit
+> tests alone do not change this status. If Xray's TUN inbound proves unstable
+> on device, record the failure here and switch to approach B (go-tun2socks AAR)
+> as a new brainstorming/design cycle, not as an in-place patch to this plan.
+
 ## Intent
 
 The client is a Windows-desktop MVP today. All portable logic (subscription
@@ -258,13 +265,17 @@ option) and produces a platform-specific inbound set from the same snapshot:
 
 - Frontend: hide/disable desktop-only surfaces (`Updates`, anti-DPI actions,
   tray-specific copy) using Tauri's platform API; no new persisted state.
-- CI: add an Android job to `.github/workflows/ci.yml` with JDK 17, Android
-  SDK/NDK, Rust targets `aarch64-linux-android`, `armv7-linux-androideabi`,
-  `i686-linux-android`, `x86_64-linux-android`; run `cargo check` for Android
-  and `tauri android build --apk` (debug) on PRs. Signing keys stay in GitHub
-  Secrets; release AAB signing is operator-only.
-- Documentation: update root `AGENTS.md`, `docs/e2e-checklist.md` and this spec
-  status once implementation is accepted.
+- CI: the `check-android` job in `.github/workflows/ci.yml` uses JDK 17,
+  Android SDK/NDK (LLVM bin on PATH for `cc-rs`), Rust targets
+  `aarch64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android`,
+  `x86_64-linux-android`, and runs four `cargo check` commands with the
+  test-only `TAURI_CONFIG` override. No binary downloads and no
+  `tauri android build` in CI — APK/AAB builds and signing stay operator-only,
+  so missing release assets cannot silently pass CI.
+- Documentation: root `AGENTS.md` and `docs/e2e-checklist.md` carry the Android
+  status, build commands and manual device checklist. This spec's status moves
+  from `proposed` to `accepted` only after the operator runs that checklist and
+  confirms the behaviours below on a real API 34+ device.
 
 ## Verification (acceptance for implementation)
 

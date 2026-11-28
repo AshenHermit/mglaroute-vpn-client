@@ -47,3 +47,46 @@ jobs:
           workspaces: apps/desktop/src-tauri -> target
       - run: pnpm install --frozen-lockfile
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml -- --test-threads=1
+
+  check-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+      - uses: android-actions/setup-android@v3
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+          link-to-sdk: true
+      # cc-rs needs the NDK clang wrappers on PATH for Android targets;
+      # a plain rustup target add is not enough.
+      - name: Put NDK LLVM bin on PATH
+        run: |
+          echo "NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> "$GITHUB_ENV"
+          echo "${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+      - name: Install Android Rust targets
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+      - run: pnpm install --frozen-lockfile
+      - run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --target aarch64-linux-android
+      - run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --target armv7-linux-androideabi
+      - run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --target i686-linux-android
+      - run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --target x86_64-linux-android

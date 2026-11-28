@@ -1,4 +1,4 @@
-# End-to-end checklist (manual, Windows desktop)
+# End-to-end checklist (manual: Windows desktop + Android)
 
 MVP behaviour is verified in code by unit tests with fakes. The checks below are
 the manual, real-machine pass: real bundled xray, real subscription, real Windows
@@ -199,8 +199,84 @@ version. All steps are manual.
     a restart; no drag-and-drop, import/export, port/protocol/network/process
     fields, or DNS rules are present.
 
+## Android (manual, real device — operator only)
+
+Android builds are **not** produced in CI. These steps need a real API 34+
+device, the Android SDK/NDK and a signing keystore. The signed AAB is built
+independently of `installer:build` (which only produces the Windows NSIS setup).
+`check-android` in CI only runs `cargo check` for the four Android targets — no
+binaries are downloaded and no APK/AAB is built there.
+
+Prerequisites:
+
+- Android SDK + NDK (r26d or compatible) installed via
+  `android-actions/setup-android` / `nttld/setup-ndk` locally, or Android Studio
+  SDK Manager; NDK LLVM bin on `PATH` for Android `cargo check`.
+- A signing keystore and `keystore.properties` under
+  `apps/desktop/src-tauri/gen/android/` (gitignored).
+- A real subscription URL, and a way to check exit IP and DNS leaks from both a
+  browser and another installed app.
+
+A1. **Stage Android binaries.** (build machine, network)
+    Run `pnpm binaries:fetch:android` then `pnpm binaries:verify:android`.
+    Expected: official `Xray-android-arm64-v8a.zip` and
+    `Xray-android-amd64.zip` assets are sha256-verified and staged as the two
+    published Android sidecars (`xray-aarch64-linux-android`,
+    `xray-x86_64-linux-android`); geoip.dat/geosite.dat come from the verified
+    arm64 zip. The other two Rust targets (`armv7-linux-androideabi`,
+    `i686-linux-android`) are compile-only in CI — no release zip exists for
+    them. A missing `geoip.dat` / `geosite.dat` fails the build.
+
+A2. **Build a signed AAB.** (build machine, signing)
+    Run `pnpm --filter @mglaroute/desktop exec tauri android build --aab --target aarch64 --target x86_64`
+    with signing configured. This is independent of `installer:build`: do not
+    run the Windows installer script to produce the Android artifact.
+    Expected: a signed AAB containing the xray Android sidecars and geo assets,
+    no Windows anti-DPI binaries and no updater plugin.
+
+A3. **Install and grant VPN consent.** (device)
+    Install the signed AAB (e.g. via `adb install` of a generated APK, or sideload),
+    launch the app, import a subscription and tap Connect.
+    Expected: first connect shows the Android VPN consent dialog; after grant,
+    the persistent VPN/notification icon appears and stays until disconnect.
+
+A4. **Browser + another app exit IP.** (device, network)
+    With the tunnel connected, check the exit IP in a browser and in a second,
+    unrelated app.
+    Expected: both report the selected proxy exit IP, not the device's physical
+    IP. The uplink does not loop back into the tunnel.
+
+A5. **DNS leak check.** (device, network)
+    Run a DNS-leak test page while connected.
+    Expected: DNS resolves through the tunnel; no query escapes via the physical
+    link (Android Private DNS behaviour is documented if it interferes).
+
+A6. **Excluded app cannot bind the TUN.** (device)
+    Attempt to bind a socket to the TUN interface from an excluded app.
+    Expected: blocked by the first Xray rule (`process: ["-1"] → block`); the app
+    cannot learn the proxy exit IP by bypassing the tunnel.
+
+A7. **Disconnect clears the session.** (device)
+    Tap Disconnect.
+    Expected: VPN icon and foreground notification disappear, no xray process
+    remains and no stale TUN route/session is left behind.
+
+A8. **Kill xray clears the session.** (device, shell)
+    While connected, kill the xray process from a shell.
+    Expected: UI shows disconnected and the VPN session is gone — no dead
+    tunnel left in the status bar.
+
+A9. **Probe while connected does not disturb the tunnel.** (device, network)
+    While connected, re-import/probe servers (Run test).
+    Expected: the live VPN session, TUN routes and working xray core are
+    unchanged; probe cores stay on loopback `mixed` and never touch the TUN.
+
+These Android steps are the operator acceptance gate for the design at
+`docs/superpowers/specs/2026-11-28-android-vpnservice-tun-design.md`; its status
+stays `proposed` until a real-device pass confirms all of them.
+
 ## Not covered by this checklist
 
-TUN, functional anti-DPI, Clash YAML / sing-box / v2ray JSON full-config import,
-`format=json` feed import, RAS-entry proxy parity, and Linux/Android/iOS are out
-of MVP scope. See `README.md` for the full limitation list.
+TUN on Windows, functional anti-DPI, Clash YAML / sing-box / v2ray JSON
+full-config import, `format=json` feed import, RAS-entry proxy parity, Linux and
+iOS are out of MVP scope. See `README.md` for the full limitation list.
