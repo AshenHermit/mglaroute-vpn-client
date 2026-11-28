@@ -16,7 +16,8 @@ use super::{map_vpn_error as map_to_command_error, VpnBackend, VpnError, VpnSess
 
 /// Tauri plugin identifier registered in `run()`. Kotlin class
 /// `MglarouteVpnPlugin` is loaded under this name; its commands are
-/// `prepare`, `start`, `stop`, `interface_name`, `dns_servers` and `wait_established`.
+/// `stage_assets`, `prepare`, `start`, `stop`, `interface_name`, `dns_servers`
+/// and `wait_established`.
 #[cfg(mobile)]
 pub const VPN_PLUGIN_NAME: &str = "mglaroute-vpn";
 /// Kotlin package of the generated Android project.
@@ -72,6 +73,13 @@ struct DnsResponse {
     dns_servers: Vec<String>,
 }
 
+#[cfg(mobile)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StageAssetsPayload<'a> {
+    target_dir: &'a str,
+}
+
 /// Adapter from a Tauri mobile plugin handle to the platform VPN contract.
 /// The handle is the only state: sessions live in the Kotlin `VpnService`.
 #[cfg(mobile)]
@@ -110,6 +118,15 @@ pub fn map_vpn_error(error: VpnError) -> crate::commands::CommandError {
 
 #[cfg(mobile)]
 impl VpnBackend for MglarouteVpnBackend {
+    fn stage_assets(&self, target_dir: &std::path::Path) -> Result<(), VpnError> {
+        let target = target_dir.to_string_lossy().into_owned();
+        self.0
+            .run_mobile_plugin::<()>("stage_assets", StageAssetsPayload {
+                target_dir: &target,
+            })
+            .map_err(|error| map_plugin_error(error, VpnError::StartFailed))
+    }
+
     fn prepare(&self) -> Result<bool, VpnError> {
         let response: PrepareResponse = self
             .0
@@ -225,6 +242,104 @@ mod tests {
         );
     }
 
+    /// Final-review Critical 1: APK resources are assets, not filesystem
+    /// paths; Kotlin must copy them into the app files dir before launch.
+    #[test]
+    fn kotlin_plugin_stages_bundled_binaries_into_app_files_dir() {
+        let plugin = kotlin("MglarouteVpnPlugin.kt");
+        for required in [
+            "fun stage_assets",
+            "stageAssets(File(activity.filesDir, \"binaries\"))",
+            "activity.assets.open(asset)",
+            "setExecutable(true, false)",
+            "binaries/xray-aarch64-linux-android",
+            "binaries/xray-x86_64-linux-android",
+            "binaries/geoip.dat",
+            "binaries/geosite.dat",
+        ] {
+            assert!(
+                plugin.contains(required),
+                "Kotlin plugin must stage APK binaries/geo assets: missing {required}"
+            );
+        }
+        let load = plugin.find("override fun load").expect("plugin load");
+        let prepare = plugin.find("fun prepare").expect("plugin prepare");
+        let staged = plugin
+            .find("stageAssets(File(activity.filesDir")
+            .expect("plugin must stage assets at load");
+        assert!(
+            load < staged && staged < prepare,
+            "asset staging must happen at plugin load, before any prepare/start"
+        );
+    }
+
+    /// Final-review Important 1: every failure after establish (and every
+    /// early `start` rejection) must tear down the foreground VPN session.
+    #[test]
+    fn kotlin_plugin_stops_vpn_session_on_start_failure() {
+        let plugin = kotlin("MglarouteVpnPlugin.kt");
+        let start = plugin
+            .find("fun start(invoke: Invoke)")
+            .expect("plugin start command");
+        let complete = plugin
+            .find("private fun completeStart")
+            .expect("plugin completeStart helper");
+        let complete_body = &plugin[complete..];
+
+        // Both early rejection paths in start() must call stopSession()
+        // defensively before returning.
+        let helper = plugin
+            .find("private fun stopActiveSessionSafely")
+            .expect("plugin must centralise defensive teardown");
+        assert!(
+            plugin[helper..].contains("stopSession()"),
+            "defensive teardown helper must call stopSession()"
+        );
+        let start_body = &plugin[start..complete];
+        assert_eq!(
+            start_body.matches("stopActiveSessionSafely()").count(),
+            2,
+            "both start() rejection paths must stop a possibly-live VPN session"
+        );
+
+        // Post-establish failures: fd==null and interface-name failure.
+        let fd_null = complete_body
+            .find("if (fd == null)")
+            .expect("post-establish fd null branch");
+        let after_fd = &complete_body[fd_null..];
+        let name_null = after_fd
+            .find("if (name == null)")
+            .expect("post-establish interface-name failure branch");
+        let fd_branch = &after_fd[..name_null];
+        assert!(
+            fd_branch.contains("stopActiveSessionSafely()"),
+            "fd==null after establish must stop the VPN session"
+        );
+        assert!(
+            after_fd[name_null..].contains("stopActiveSessionSafely()"),
+            "interface-name failure after establish must stop the VPN session"
+        );
+        assert!(
+            plugin[helper..].contains("try"),
+            "stopSession() must be guarded so a teardown exception cannot mask the start error"
+        );
+    }
+
+    /// Final-review Important 2: a process-death restart must not resurrect a
+    /// foreground notification with no TUN behind it.
+    #[test]
+    fn kotlin_service_does_not_stickily_restart_without_a_tun() {
+        let service = kotlin("MglarouteVpnService.kt");
+        assert!(
+            service.contains("return START_NOT_STICKY"),
+            "service must not be restarted with no TUN after process death"
+        );
+        assert!(
+            !service.contains("return START_STICKY"),
+            "START_STICKY leaves a phantom foreground service after process death"
+        );
+    }
+
     #[test]
     fn kotlin_plugin_reads_physical_dns_servers() {
         let plugin = kotlin("MglarouteVpnPlugin.kt");
@@ -258,6 +373,8 @@ mod tests {
             "struct MglarouteVpnBackend",
             "impl VpnBackend for MglarouteVpnBackend",
             "run_mobile_plugin",
+            "stage_assets",
+            "StageAssetsPayload",
             "mglaroute-vpn",
             "map_to_command_error",
             "tun-established",

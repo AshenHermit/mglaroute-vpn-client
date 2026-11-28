@@ -33,7 +33,9 @@ class MglarouteVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // The interface is created by startSession() once the plugin binds.
-        return START_STICKY
+        // No restart after process death: a restarted service would show a
+        // foreground notification with no TUN fd behind it.
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? =

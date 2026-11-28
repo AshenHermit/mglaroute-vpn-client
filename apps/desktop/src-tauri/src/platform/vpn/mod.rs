@@ -40,6 +40,13 @@ pub enum VpnError {
 /// Lifecycle of a platform VPN interface. `start`/`stop` are separate calls so
 /// a plugin can own its session without exposing OS handles to the commands.
 pub trait VpnBackend: Send + Sync {
+    /// Copy bundled assets into the app-writable binaries dir. Desktop and
+    /// test doubles are no-ops; the Android plugin stages APK resources here
+    /// before any xray launch. `target_dir` comes from the Rust app-data path,
+    /// so the two sides cannot disagree about the filesystem location.
+    fn stage_assets(&self, _target_dir: &std::path::Path) -> Result<(), VpnError> {
+        Ok(())
+    }
     /// Ask for the platform VPN permission. `Ok(false)` means the user declined
     /// or the platform cannot grant it; no session may be started then.
     fn prepare(&self) -> Result<bool, VpnError>;
@@ -111,6 +118,8 @@ pub struct FakeVpnBackend {
     pub dns_upstreams: Vec<String>,
     pub dns_error: Option<VpnError>,
     pub start_error: Option<VpnError>,
+    /// Last `stage_assets` target observed by command tests.
+    pub staged_dir: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
     /// Observes `stop()` from command tests without leaking into production.
     pub stop_hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
@@ -127,6 +136,7 @@ impl Default for FakeVpnBackend {
             dns_upstreams: vec!["1.1.1.1".to_string()],
             dns_error: None,
             start_error: None,
+            staged_dir: std::sync::Arc::new(std::sync::Mutex::new(None)),
             stop_hook: None,
         }
     }
@@ -151,6 +161,15 @@ impl FakeVpnBackend {
 }
 
 impl VpnBackend for FakeVpnBackend {
+    fn stage_assets(&self, target_dir: &std::path::Path) -> Result<(), VpnError> {
+        self.record("stage_assets");
+        *self
+            .staged_dir
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(target_dir.to_path_buf());
+        Ok(())
+    }
+
     fn prepare(&self) -> Result<bool, VpnError> {
         self.record("prepare");
         Ok(self.prepare_granted)

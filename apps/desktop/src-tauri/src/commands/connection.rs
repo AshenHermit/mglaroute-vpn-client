@@ -98,6 +98,21 @@ async fn connect_impl_android(
     port: u16,
     exclusions: &[String],
 ) -> Result<ConnectionStatePayload, CommandError> {
+    // 0. APK resources are assets; stage them into the real app binaries dir
+    //    that both the launcher pre-check and XRAY_LOCATION_ASSET use. Doing
+    //    this here (not at Rust startup) guarantees the Kotlin plugin is
+    //    loaded, and it is idempotent.
+    let asset_dir = state
+        .inner
+        .asset_dir
+        .clone()
+        .unwrap_or_else(|| state.inner.config_dir.join("binaries"));
+    state
+        .inner
+        .vpn
+        .stage_assets(&asset_dir)
+        .map_err(map_vpn_error)?;
+
     // 1. Permission first: the system dialog may still be pending.
     let granted = state.inner.vpn.prepare().map_err(map_vpn_error)?;
     if !granted {
@@ -135,7 +150,14 @@ async fn connect_impl_android(
 
     let session = match state.inner.vpn.start(android_start_request()) {
         Ok(session) => session,
-        Err(error) => return Err(map_vpn_error(error)),
+        Err(error) => {
+            // Kotlin starts the foreground service before establish(); a
+            // rejected start may leave that session live even though Rust
+            // never set `vpn_active`. Stop defensively; ignore teardown errors
+            // so the original start error stays authoritative.
+            let _ = state.inner.vpn.stop();
+            return Err(map_vpn_error(error));
+        }
     };
     {
         let mut runtime = state.inner.runtime.lock().await;
@@ -800,7 +822,7 @@ mod tests {
         assert!(runtime.tun_fd.is_none());
         assert!(!runtime.vpn_active);
         assert_eq!(runtime.connection.status, ConnectionStatus::Disconnected);
-        assert_eq!(harness.vpn.calls(), vec!["prepare"]);
+        assert_eq!(harness.vpn.calls(), vec!["stage_assets", "prepare"]);
     }
 
     #[tokio::test]
@@ -928,6 +950,50 @@ mod tests {
         assert!(harness.vpn.calls().contains(&"stop"));
     }
 
+    /// Final-review Important 1: Rust must not rely solely on Kotlin to clean
+    /// up a session that may already exist when `start` rejects.
+    #[tokio::test]
+    async fn android_connect_stages_assets_into_app_binaries_dir_first() {
+        let harness = android_state(FakeVpnBackend::default(), false);
+        let expected = harness.dir.path().join("binaries");
+
+        connect(&harness).await.expect("connect");
+        assert_eq!(
+            *harness.vpn.staged_dir.lock().expect("lock staged dir"),
+            Some(expected),
+            "APK assets must be staged into the same dir the launcher resolves"
+        );
+        let calls = harness.vpn.calls();
+        assert_eq!(
+            calls.first(),
+            Some(&"stage_assets"),
+            "staging must precede permission, DNS and interface lookups: {calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn android_start_error_defensively_stops_vpn_session() {
+        use crate::platform::vpn::VpnError;
+
+        let mut vpn = FakeVpnBackend::default();
+        vpn.start_error = Some(VpnError::StartFailed);
+        let harness = android_state(vpn, false);
+
+        let error = connect(&harness).await.expect_err("start failure");
+        assert_eq!(error, CommandError::Core);
+        assert!(
+            harness.vpn.calls().contains(&"stop"),
+            "start failure must defensively stop a possibly-live VPN session"
+        );
+        assert!(
+            harness.fd_seen.lock().unwrap().is_empty(),
+            "no fd handoff after start failure"
+        );
+        let runtime = harness.state.inner.runtime.lock().await;
+        assert!(!runtime.vpn_active);
+        assert!(runtime.tun_fd.is_none());
+    }
+
     #[tokio::test]
     async fn android_try_wait_failure_cleans_up_vpn_and_fd() {
         let harness = android_state_with_try_wait_error(FakeVpnBackend::default());
@@ -953,6 +1019,7 @@ mod tests {
         assert_eq!(
             harness.vpn.calls(),
             vec![
+                "stage_assets",
                 "prepare",
                 "dns_upstreams",
                 "physical_interface",

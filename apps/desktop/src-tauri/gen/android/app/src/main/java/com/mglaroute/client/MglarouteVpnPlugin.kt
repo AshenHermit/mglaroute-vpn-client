@@ -12,6 +12,8 @@ import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
 import android.webkit.WebView
+import java.io.File
+import java.io.FileOutputStream
 import androidx.activity.ActivityResultContracts
 import androidx.activity.result.ActivityResultLauncher
 import androidx.appcompat.app.AppCompatActivity
@@ -33,6 +35,12 @@ class VpnStartArgs {
     var disallowedPackages: List<String> = emptyList()
 }
 
+@InvokeArg
+class StageAssetsArgs {
+    /** Absolute path to the app-writable binaries dir (filesDir/binaries). */
+    lateinit var targetDir: String
+}
+
 /** Bridge between Tauri's mobile plugin API and [MglarouteVpnService]. */
 @TauriPlugin(
     permissions = [
@@ -47,6 +55,9 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
     private var pendingPrepare: Invoke? = null
 
     override fun load(webView: WebView) {
+        // Kotlin owns APK assets; stage them into the app files dir here so the
+        // Rust launcher can resolve real filesystem paths before first connect.
+        stageAssets(File(activity.filesDir, "binaries"))
         // Register before any prepare() call: launching the consent activity
         // needs a callback that already exists when the result comes back.
         vpnPermissionLauncher = (activity as AppCompatActivity).registerForActivityResult(
@@ -70,6 +81,49 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
                 arrayOf(Manifest.permission.POST_NOTIFICATIONS),
                 NOTIFICATION_REQUEST_CODE,
             )
+        }
+    }
+
+    /**
+     * Tauri mobile bundles `bundle.resources` as APK assets, not filesystem
+     * paths. Copy xray and the geo dat files into a real app-writable dir and
+     * make the executables chmod +x before Rust tries to spawn them.
+     */
+    @Command
+    fun stage_assets(invoke: Invoke) {
+        val args = try {
+            invoke.parseArgs(StageAssetsArgs::class.java)
+        } catch (_: Exception) {
+            invoke.reject("invalid asset staging request", "asset_staging_failed")
+            return
+        }
+        if (stageAssets(File(args.targetDir))) invoke.resolve()
+        else invoke.reject("cannot stage bundled binaries", "asset_staging_failed")
+    }
+
+    /** Copy APK assets into a real app-writable dir; xray gets +x. */
+    private fun stageAssets(target: File): Boolean {
+        return try {
+            if (!target.isDirectory && !target.mkdirs()) return false
+            for (asset in STAGED_ASSETS) {
+                val destination = File(target, asset.substringAfterLast('/'))
+                activity.assets.open(asset).use { input ->
+                    FileOutputStream(destination).use { output ->
+                        val buffer = ByteArray(16 * 1024)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                        }
+                    }
+                }
+                if (asset.contains("xray-") && !destination.setExecutable(true, false)) {
+                    return false
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -121,9 +175,11 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
         try {
             activity.startForegroundService(intent)
             if (!activity.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
+                stopActiveSessionSafely()
                 invoke.reject("VPN service is unavailable", "interface_unavailable")
             }
         } catch (_: SecurityException) {
+            stopActiveSessionSafely()
             invoke.reject("VPN permission is required", "permission_required")
         }
     }
@@ -178,13 +234,19 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
     private fun completeStart(invoke: Invoke, service: MglarouteVpnService, args: VpnStartArgs) {
         val fd = service.startSession(args)
         if (fd == null) {
+            stopActiveSessionSafely()
             invoke.reject("VPN interface is unavailable", "interface_unavailable")
             return
         }
         val name = interfaceName()
         if (name == null) {
             // No handoff happened, so this descriptor is still ours to close.
-            android.system.Os.close(fd)
+            try {
+                android.system.Os.close(fd)
+            } catch (_: Exception) {
+                // Closing is best effort; teardown must still happen.
+            }
+            stopActiveSessionSafely()
             invoke.reject("VPN interface is unavailable", "interface_unavailable")
             return
         }
@@ -195,6 +257,19 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve(response)
     }
 
+    /**
+     * A foreground service started before `establish()` may still be running
+     * when `start` fails; Rust cannot see a session flag it was never told
+     * about, so Kotlin owns this defensive teardown.
+     */
+    private fun stopActiveSessionSafely() {
+        try {
+            MglarouteVpnService.active?.stopSession()
+        } catch (_: Exception) {
+            // Never mask the original start failure with a teardown error.
+        }
+    }
+
     private fun interfaceName(): String? {
         val manager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return null
@@ -203,5 +278,11 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
 
     private companion object {
         const val NOTIFICATION_REQUEST_CODE = 4102
+        val STAGED_ASSETS = listOf(
+            "binaries/xray-aarch64-linux-android",
+            "binaries/xray-x86_64-linux-android",
+            "binaries/geoip.dat",
+            "binaries/geosite.dat",
+        )
     }
 }
