@@ -17,9 +17,10 @@ use tokio::time::MissedTickBehavior;
 use crate::anti_dpi::AntiDpiStatus;
 use crate::core::job::JobHandle;
 use crate::core::snapshot::ConfigSnapshot;
-use crate::core::supervisor::{binary_path, ChildGuard, SupervisorError};
+use crate::core::supervisor::{binary_path_with_resource_dir, ChildGuard, SupervisorError};
 use crate::platform::proxy::{load_previous, PreviousProxy, ProxyBackend};
 use crate::platform::proxy_windows::WindowsProxy;
+use crate::platform::vpn::{NoopVpnBackend, VpnBackend};
 use crate::probe::scheduler::should_refetch;
 use crate::service_profiles::ensure_defaults_on_empty;
 use crate::state::{emit, MutationGuard, MutationPermit};
@@ -85,6 +86,10 @@ pub enum CommandError {
     UpdateBusy,
     #[error("update failure")]
     Update,
+    #[error("vpn permission required")]
+    VpnPermissionRequired,
+    #[error("vpn interface unavailable")]
+    VpnInterfaceUnavailable,
 }
 
 impl From<rusqlite::Error> for CommandError {
@@ -131,6 +136,33 @@ pub trait CoreHandle: Send {
 
 pub trait CoreLauncher: Send + Sync {
     fn launch(&self, snapshot: &ConfigSnapshot) -> std::result::Result<Box<dyn CoreHandle>, String>;
+
+    /// Android live-core launch. `spawn_with` consumes and closes the parent's
+    /// TUN fd on every path; the caller must therefore drop its own ownership
+    /// when it hands the fd here. Desktop launchers keep the default (fd
+    /// ignored) so the Windows path is unchanged.
+    fn launch_with_tun(
+        &self,
+        snapshot: &ConfigSnapshot,
+        _tun_fd: i32,
+    ) -> std::result::Result<Box<dyn CoreHandle>, String> {
+        self.launch(snapshot)
+    }
+}
+
+/// Parent-side close for a TUN fd that never reached a launcher (for example,
+/// a failed `start` follow-up or a shutdown with an unconsumed fd). The
+/// production implementation is a no-op on desktop; tests record the call.
+pub trait FdCloser: Send + Sync {
+    fn close(&self, fd: i32);
+}
+
+pub struct RealFdCloser;
+
+impl FdCloser for RealFdCloser {
+    fn close(&self, fd: i32) {
+        crate::core::supervisor::close_tun_fd(fd);
+    }
 }
 
 struct XrayCoreHandle(ChildGuard);
@@ -153,16 +185,63 @@ impl CoreHandle for XrayCoreHandle {
 /// shared job owns every connection core started through this launcher.
 pub struct XrayLauncher {
     job: Arc<JobHandle>,
+    /// App-writable binaries dir. On Android this is the real app files/cache
+    /// dir populated from APK assets; desktop passes `None` and keeps the
+    /// existing `binary_path(None)` order.
+    binaries_dir: Option<PathBuf>,
+}
+
+impl XrayLauncher {
+    pub fn new(job: Arc<JobHandle>, binaries_dir: Option<PathBuf>) -> Self {
+        Self { job, binaries_dir }
+    }
+
+    fn resolved_binary(&self) -> PathBuf {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf));
+        let env_path = std::env::var_os(crate::core::supervisor::BINARY_PATH_ENV);
+        binary_path_with_resource_dir(
+            exe_dir.as_deref(),
+            None,
+            env_path.as_deref(),
+            self.binaries_dir.as_deref(),
+        )
+    }
 }
 
 impl CoreLauncher for XrayLauncher {
     fn launch(&self, snapshot: &ConfigSnapshot) -> std::result::Result<Box<dyn CoreHandle>, String> {
-        if !binary_path(None).exists() {
+        if !self.resolved_binary().exists() {
             return Err("core binary unavailable".to_string());
         }
-        ChildGuard::spawn(snapshot, Some(&self.job))
-            .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
-            .map_err(|_| "failed to start core".to_string())
+        crate::core::supervisor::spawn_with_dir(
+            snapshot,
+            Some(&self.job),
+            None,
+            self.binaries_dir.as_deref(),
+        )
+        .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
+        .map_err(|_| "failed to start core".to_string())
+    }
+
+    fn launch_with_tun(
+        &self,
+        snapshot: &ConfigSnapshot,
+        tun_fd: i32,
+    ) -> std::result::Result<Box<dyn CoreHandle>, String> {
+        if !self.resolved_binary().exists() {
+            crate::core::supervisor::close_tun_fd(tun_fd);
+            return Err("core binary unavailable".to_string());
+        }
+        crate::core::supervisor::spawn_with_dir(
+            snapshot,
+            Some(&self.job),
+            Some(tun_fd),
+            self.binaries_dir.as_deref(),
+        )
+        .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
+        .map_err(|_| "failed to start core".to_string())
     }
 }
 
@@ -173,6 +252,11 @@ struct RuntimeState {
     config_path: Option<PathBuf>,
     proxy: Box<dyn ProxyBackend + Send + Sync>,
     last_switch: Option<DateTime<Utc>>,
+    /// TUN fd owned by the connection slot until handed to the launcher. The
+    /// launcher consumes and closes it, so this is `None` for a live core.
+    tun_fd: Option<i32>,
+    /// True while a platform VPN session must be stopped on teardown.
+    vpn_active: bool,
 }
 
 struct AppStateInner {
@@ -182,11 +266,22 @@ struct AppStateInner {
     mutation_guard: MutationGuard,
     runtime: Mutex<RuntimeState>,
     config_dir: PathBuf,
-    /// Directory holding bundled geoip/geosite dat files. Sent to xray via
-    /// `XRAY_LOCATION_ASSET` in generated configs; `None` in tests.
+    /// Directory holding bundled geoip/geosite dat files (and, on Android, the
+    /// staged xray binaries). Sent to xray via `XRAY_LOCATION_ASSET`; `None`
+    /// in tests.
     asset_dir: Option<PathBuf>,
+    /// Base dir for probe config/PID sidecars. `None` keeps Windows on the
+    /// system temp dir; Android injects the app cache dir at bootstrap.
+    temp_dir: Option<PathBuf>,
     launcher: Box<dyn CoreLauncher>,
     job: Arc<JobHandle>,
+    /// Platform VPN seam. Desktop uses `NoopVpnBackend`; Android installs the
+    /// plugin-backed implementation at startup.
+    vpn: Box<dyn VpnBackend>,
+    /// Runtime platform branch. Tests on a desktop host set this to exercise
+    /// the Android lifecycle without a real VpnService.
+    android: bool,
+    fd_closer: Box<dyn FdCloser>,
     // Guarded by a std Mutex so `probe_cancel` can check "running" and send the
     // stop flag atomically with `start_probe`/`finish_probe`. A std lock is
     // required because the cancel command is sync (no await while held).
@@ -219,6 +314,32 @@ impl AppState {
         launcher: Box<dyn CoreLauncher>,
         job: Arc<JobHandle>,
     ) -> Self {
+        Self::new_with_vpn(
+            conn,
+            config_dir,
+            proxy,
+            launcher,
+            job,
+            Box::new(NoopVpnBackend),
+            cfg!(target_os = "android"),
+            Box::new(RealFdCloser),
+        )
+    }
+
+    /// Platform-aware constructor. `android` is a runtime flag so the Android
+    /// lifecycle can be exercised on a desktop host in unit tests; production
+    /// callers pass `cfg!(target_os = "android")`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_vpn(
+        conn: Connection,
+        config_dir: PathBuf,
+        proxy: Box<dyn ProxyBackend + Send + Sync>,
+        launcher: Box<dyn CoreLauncher>,
+        job: Arc<JobHandle>,
+        vpn: Box<dyn VpnBackend>,
+        android: bool,
+        fd_closer: Box<dyn FdCloser>,
+    ) -> Self {
         Self {
             inner: Arc::new(AppStateInner {
                 conn: Mutex::new(conn),
@@ -236,11 +357,17 @@ impl AppState {
                     config_path: None,
                     proxy,
                     last_switch: None,
+                    tun_fd: None,
+                    vpn_active: false,
                 }),
                 config_dir,
                 asset_dir: None,
+                temp_dir: None,
                 launcher,
                 job,
+                vpn,
+                android,
+                fd_closer,
                 probe_running: std::sync::Mutex::new(false),
                 probe_cancel_tx: watch::Sender::new(false),
             }),
@@ -325,6 +452,8 @@ impl AppState {
 pub fn bootstrap(
     dir: &Path,
     asset_dir: Option<PathBuf>,
+    temp_dir: Option<PathBuf>,
+    vpn: Box<dyn VpnBackend>,
 ) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;
     let mut conn = Connection::open(dir.join("client.db"))?;
@@ -341,20 +470,25 @@ pub fn bootstrap(
         proxy.restore(&previous)?;
     }
 
-    let mut state = AppState::new_with_job(
+    let mut state = AppState::new_with_vpn(
         conn,
         dir.to_path_buf(),
         proxy,
-        Box::new(XrayLauncher { job: job.clone() }),
+        Box::new(XrayLauncher::new(job.clone(), asset_dir.clone())),
         job,
+        vpn,
+        cfg!(target_os = "android"),
+        Box::new(RealFdCloser),
     );
     // The production state is still uniquely owned here, so install the
-    // bundled asset directory without widening the public constructors.
-    // A clone before this point would silently drop geo assets, so fail loudly.
-    if let Some(dir) = asset_dir {
+    // bundled asset directory and the probe temp base without widening the
+    // public constructors. A clone before this point would silently drop geo
+    // assets or write probes into an unwritable system temp dir, so fail loudly.
+    if asset_dir.is_some() || temp_dir.is_some() {
         let inner = Arc::get_mut(&mut state.inner)
-            .expect("bootstrap state must be uniquely owned when installing asset_dir");
-        inner.asset_dir = Some(dir);
+            .expect("bootstrap state must be uniquely owned when installing asset_dir/temp_dir");
+        inner.asset_dir = asset_dir;
+        inner.temp_dir = temp_dir;
     }
     Ok(state)
 }
@@ -401,6 +535,28 @@ pub(crate) async fn handle_exited_child(
 
     // The process already exited; dropping the handle just frees the slot.
     drop(child);
+    if state.inner.android {
+        // No proxy to restore: VpnService owns the routes. The TUN fd was
+        // consumed by the launcher at connect, so only an unconsumed fd is
+        // closed here (never a second close of a live core's descriptor).
+        let fd = state.inner.runtime.lock().await.tun_fd.take();
+        if let Some(fd) = fd {
+            state.inner.fd_closer.close(fd);
+        }
+        if state.inner.runtime.lock().await.vpn_active {
+            let _ = state.inner.vpn.stop();
+        }
+        remove_config(&config_path);
+        let mut runtime = state.inner.runtime.lock().await;
+        runtime.vpn_active = false;
+        runtime.connection = ConnectionStatePayload {
+            status: ConnectionStatus::Faulted,
+            profile_id,
+            proxy_port: None,
+        };
+        emit_connection(&runtime.connection);
+        return Ok(true);
+    }
     let mut restore_ok = true;
     if let Some(previous) = previous {
         for _ in 0..2 {
@@ -492,6 +648,22 @@ fn remove_config(path: &Option<PathBuf>) {
     if let Some(path) = path {
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// Runtime platform flag for the frontend. No state, no arguments, no secrets;
+/// derived from the compile-time Tauri `mobile` cfg so mobile builds hide
+/// desktop-only surfaces (updater, anti-DPI actions).
+#[tauri::command]
+pub fn platform_info() -> PlatformInfoPayload {
+    PlatformInfoPayload {
+        mobile: cfg!(mobile),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformInfoPayload {
+    pub mobile: bool,
 }
 
 #[tauri::command]
@@ -791,6 +963,37 @@ mod tests {
     }
 
     #[test]
+    fn platform_info_payload_has_only_mobile_flag() {
+        let payload = platform_info();
+        assert_eq!(
+            serde_json::to_value(&payload).expect("serialize platform info"),
+            json!({ "mobile": cfg!(mobile) })
+        );
+    }
+
+    #[test]
+    fn vpn_command_errors_are_generic_and_snake_case() {
+        assert_eq!(
+            serde_json::to_value(CommandError::VpnPermissionRequired)
+                .expect("serialize permission error"),
+            json!("vpn_permission_required")
+        );
+        assert_eq!(
+            serde_json::to_value(CommandError::VpnInterfaceUnavailable)
+                .expect("serialize interface error"),
+            json!("vpn_interface_unavailable")
+        );
+        assert_eq!(
+            CommandError::VpnPermissionRequired.to_string(),
+            "vpn permission required"
+        );
+        assert_eq!(
+            CommandError::VpnInterfaceUnavailable.to_string(),
+            "vpn interface unavailable"
+        );
+    }
+
+    #[test]
     fn connect_remote_uses_best_eligible() {
         let conn = seeded_conn();
         let chosen = best_eligible_profile(&conn)
@@ -983,6 +1186,7 @@ mod tests {
                 "connection_connect",
                 "connection_disconnect",
                 "connection_status",
+                "platform_info",
                 "probe_cancel",
                 "probe_run",
                 "profile_list",

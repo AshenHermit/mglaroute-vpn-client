@@ -30,8 +30,9 @@ const tabs: ReadonlyArray<{ value: SettingsTab; label: string }> = [
 ];
 
 /** Settings is a center-zone page: rail and bottom navigation stay mounted. */
-export default function Settings() {
+export default function Settings({ mobile }: { mobile: boolean }) {
   const [tab, setTab] = useState<SettingsTab>("subscriptions");
+  const visibleTabs = mobile ? tabs.filter(({ value }) => value !== "updates") : tabs;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -41,9 +42,11 @@ export default function Settings() {
         onValueChange={(value) => setTab(value as SettingsTab)}
         className="flex min-h-0 flex-1 flex-col"
       >
-        <TabsList className="grid shrink-0 grid-cols-5 gap-1 border-b border-border p-2">
+        <TabsList
+          className={`grid shrink-0 gap-1 border-b border-border p-2 ${mobile ? "grid-cols-4" : "grid-cols-5"}`}
+        >
           <TabsHighlight className="rounded-md bg-muted">
-            {tabs.map(({ value, label }) => (
+            {visibleTabs.map(({ value, label }) => (
               <TabsHighlightItem key={value} value={value} className="min-h-11">
                 <TabsTrigger
                   value={value}
@@ -69,9 +72,11 @@ export default function Settings() {
           <TabsContent value="settings">
             <SettingsForm />
           </TabsContent>
-          <TabsContent value="updates">
-            <UpdatePanel />
-          </TabsContent>
+          {!mobile && (
+            <TabsContent value="updates">
+              <UpdatePanel />
+            </TabsContent>
+          )}
         </TabsContents>
       </Tabs>
     </div>

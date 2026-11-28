@@ -1,8 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem};
+#[cfg(desktop)]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Runtime, WindowEvent};
+#[cfg(desktop)]
+use tauri::Manager;
+use tauri::{AppHandle, Runtime, WindowEvent};
 
 use crate::commands::AppState;
 
@@ -48,6 +52,7 @@ pub(crate) fn abort_shutdown() {
     SHUTTING_DOWN.store(false, Ordering::SeqCst);
 }
 
+#[cfg(desktop)]
 pub(crate) fn setup_tray<R: Runtime>(app: &mut tauri::App<R>) -> tauri::Result<()> {
     let app_handle = app.handle().clone();
     let open = MenuItem::with_id(&app_handle, "open", "Open", true, None::<&str>)?;

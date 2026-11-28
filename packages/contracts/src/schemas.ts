@@ -147,6 +147,12 @@ export const AntiDpiStatusSchema = z.object({
 });
 export type AntiDpiStatus = z.infer<typeof AntiDpiStatusSchema>;
 
+// Thin platform flag; desktop builds omit it in older tests, so default false.
+export const PlatformInfoSchema = z.object({
+  mobile: z.boolean().default(false),
+});
+export type PlatformInfo = z.infer<typeof PlatformInfoSchema>;
+
 export const UpdateInfoSchema = z.object({
   version: z.string(),
   currentVersion: z.string(),

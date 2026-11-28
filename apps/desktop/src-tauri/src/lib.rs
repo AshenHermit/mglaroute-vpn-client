@@ -12,7 +12,9 @@ pub mod storage;
 pub mod subscription;
 pub mod update;
 
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
+#[cfg(desktop)]
+use std::time::SystemTime;
 
 use tauri::Manager;
 
@@ -60,6 +62,7 @@ command_list!(
     connection_status,
     connection_connect,
     connection_disconnect,
+    platform_info,
     anti_dpi_status,
     anti_dpi_start,
     anti_dpi_stop,
@@ -78,8 +81,10 @@ fn trace_startup_phase(started: Instant, phase: &'static str) {
     }
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let started = Instant::now();
+    #[cfg(desktop)]
     let cutoff = SystemTime::now();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -88,7 +93,30 @@ pub fn run() {
     let handle = runtime.handle().clone();
     trace_startup_phase(started, "runtime-ready");
 
-    tauri::Builder::default()
+    #[cfg(mobile)]
+    let vpn_plugin =
+        tauri::plugin::Builder::<tauri::Wry, ()>::new(platform::vpn::mobile::VPN_PLUGIN_NAME)
+        .setup(|app, api| {
+            #[cfg(target_os = "android")]
+            {
+                let plugin_handle = api.register_android_plugin(
+                    platform::vpn::mobile::VPN_PLUGIN_PACKAGE,
+                    platform::vpn::mobile::VPN_PLUGIN_CLASS,
+                )?;
+                app.manage(platform::vpn::mobile::MglarouteVpnBackend::new(
+                    plugin_handle,
+                ));
+            }
+            Ok(())
+        })
+        .build();
+
+    #[cfg(mobile)]
+    let builder = tauri::Builder::default().plugin(vpn_plugin);
+    #[cfg(not(mobile))]
+    let builder = tauri::Builder::default();
+
+    builder
         .on_window_event(lifecycle::hide_on_close)
         .setup(move |app| {
             let dir = app
@@ -97,21 +125,47 @@ pub fn run() {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             // Startup restore happens before either scheduler loop is spawned.
             // No auto-connect: proxy state is restored, the operator connects.
+            #[cfg(desktop)]
             let asset_dir = app
                 .path()
                 .resource_dir()
                 .ok()
                 .map(|path| path.join("binaries"));
-            let state = commands::bootstrap(&dir, asset_dir)?;
+            // On mobile Tauri `resources` live in the APK as `asset://...`
+            // virtual paths, not a filesystem resource dir. The Kotlin plugin
+            // stages them into `filesDir/binaries` in load(); the launcher and
+            // XRAY_LOCATION_ASSET must both use that real directory.
+            #[cfg(mobile)]
+            let asset_dir = Some(dir.join("binaries"));
+            // Android probes must write configs/PID sidecars into the app cache
+            // dir; the system temp dir is not app-writable there. Windows keeps
+            // its existing system-temp behaviour (None).
+            #[cfg(mobile)]
+            let temp_dir = app.path().cache_dir().ok();
+            #[cfg(not(mobile))]
+            let temp_dir = None;
+            #[cfg(mobile)]
+            let vpn: Box<dyn platform::vpn::VpnBackend> = {
+                let managed = app
+                    .try_state::<platform::vpn::mobile::MglarouteVpnBackend>()
+                    .expect("VPN plugin backend must be managed before app setup");
+                Box::new(managed.inner().clone())
+            };
+            #[cfg(not(mobile))]
+            let vpn: Box<dyn platform::vpn::VpnBackend> = Box::new(platform::vpn::NoopVpnBackend);
+            let state = commands::bootstrap(&dir, asset_dir, temp_dir, vpn)?;
             trace_startup_phase(started, "bootstrap");
             app.manage(state.clone());
 
-            // Stale sidecars predate this launch; anything written after the
-            // cutoff belongs to a probe started by the now-responsive UI.
-            let temp_dir = std::env::temp_dir();
-            handle.spawn_blocking(move || {
-                let _ = crate::core::job::reap_orphans(&temp_dir, Some(cutoff));
-            });
+            #[cfg(desktop)]
+            {
+                // Stale sidecars predate this launch; anything written after the
+                // cutoff belongs to a probe started by the now-responsive UI.
+                let temp_dir = std::env::temp_dir();
+                handle.spawn_blocking(move || {
+                    let _ = crate::core::job::reap_orphans(&temp_dir, Some(cutoff));
+                });
+            }
 
             state::install_tauri_sink(app.handle().clone());
             handle.spawn(commands::refetch_loop(state.clone()));
@@ -124,7 +178,10 @@ pub fn run() {
                 app.handle().plugin(tauri_plugin_shell::init())?;
             }
             trace_startup_phase(started, "plugins");
-            lifecycle::setup_tray(app)?;
+            #[cfg(desktop)]
+            {
+                lifecycle::setup_tray(app)?;
+            }
             trace_startup_phase(started, "tray");
             trace_startup_phase(started, "setup-done");
             Ok(())
@@ -144,6 +201,68 @@ mod tests {
         assert!(line.starts_with("startup bootstrap "), "{line}");
         assert!(line.ends_with("ms"), "{line}");
         assert!(!line.contains('/'), "{line}");
+    }
+
+    #[test]
+    fn android_config_overlay_removes_desktop_only_bundles() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tauri.android.conf.json"
+        );
+        let text = std::fs::read_to_string(path)
+            .expect("src-tauri/tauri.android.conf.json must exist");
+        let value: serde_json::Value =
+            serde_json::from_str(&text).expect("valid Android overlay JSON");
+        // RFC 7396 merge patch: null means "delete this member" once the
+        // overlay is applied to tauri.conf.json.
+        assert!(
+            value
+                .get("plugins")
+                .and_then(|plugins| plugins.get("updater"))
+                .is_none_or(serde_json::Value::is_null),
+            "Android overlay must remove plugins.updater"
+        );
+        assert_eq!(
+            value
+                .get("bundle")
+                .and_then(|bundle| bundle.get("resources"))
+                .and_then(|resources| resources.as_array()),
+            Some(
+                &vec![
+                    serde_json::Value::String("binaries/xray-aarch64-linux-android".into()),
+                    serde_json::Value::String("binaries/xray-x86_64-linux-android".into()),
+                    serde_json::Value::String("binaries/geoip.dat".into()),
+                    serde_json::Value::String("binaries/geosite.dat".into()),
+                ]
+            ),
+            "Android bundle resources must contain only the two xray sidecars and geo dat files"
+        );
+        assert_eq!(
+            value
+                .get("bundle")
+                .and_then(|bundle| bundle.get("createUpdaterArtifacts"))
+                .and_then(|flag| flag.as_bool()),
+            Some(false),
+            "Android must not create updater artifacts"
+        );
+        assert_eq!(
+            value
+                .get("bundle")
+                .and_then(|bundle| bundle.get("android"))
+                .and_then(|android| android.get("minSdkVersion"))
+                .and_then(|sdk| sdk.as_u64()),
+            Some(26),
+            "Android minSdkVersion must be 26"
+        );
+        assert_eq!(
+            value
+                .get("bundle")
+                .and_then(|bundle| bundle.get("android"))
+                .and_then(|android| android.get("versionCode"))
+                .and_then(|code| code.as_u64()),
+            Some(2003),
+            "Android versionCode must be 2003"
+        );
     }
 
     #[test]

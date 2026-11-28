@@ -33,6 +33,15 @@ binaries, then `tauri build --bundles nsis`), tag-triggered
 Open release page actions. Design (status `accepted`):
 `docs/superpowers/specs/2026-11-26-release-updater-design.md`.
 
+Android VpnService TUN pass implemented but **not accepted**: real system VPN
+via Android `VpnService` + Xray native `tun` inbound, Kotlin/Rust VPN plugin,
+Android xray sidecars, gated desktop-only UI. CI compile gate `check-android`
+runs `cargo check` for all four Android targets. Design (status `proposed` —
+becomes `accepted` only after the operator device checklist passes on a real
+API 34+ device):
+`docs/superpowers/specs/2026-11-28-android-vpnservice-tun-design.md`.
+Manual device pass: `docs/e2e-checklist.md` → "Android (manual, real device)".
+
 ## Stack (fixed by operator)
 
 - pnpm workspace + Nx. Node 20+.
@@ -103,7 +112,8 @@ docs/superpowers/specs/   design docs
 - No `format=json` feed import — subscription text only.
 - RAS-entry proxy iteration skipped — no `RasEnumEntriesW`, no dial-up proxy
   restore.
-- Linux desktop, Android and iOS deferred — Windows desktop only.
+- Linux desktop and iOS deferred — Windows desktop; Android pass implemented
+  but not accepted until real-device verification (see Status).
 - No `subscription-userinfo` traffic/expiry parsing (v2rayN has none).
 - No credential login to the server panel; client imports public subscription URLs only.
 
@@ -140,9 +150,30 @@ docs/superpowers/specs/   design docs
   `pnpm vitest run scripts/release-config.test.mjs scripts/set-version.test.mjs`
   checks the release wiring (scripts, CLI dep, workflow inputs, updater config,
   version sync).
+- Android: `pnpm binaries:fetch:android` / `pnpm binaries:verify:android`
+  stage + verify the two published `Xray-android-*` assets as
+  `xray-aarch64-linux-android` and `xray-x86_64-linux-android` (geo assets come
+  from the verified arm64 zip). Signed AAB:
+  `pnpm --filter @mglaroute/desktop exec tauri android build --aab --target aarch64 --target x86_64`
+  (needs a gitignored keystore; independent of `installer:build`, no CI build).
+  `check-android` in CI installs JDK 17 + Android SDK/NDK (LLVM bin on PATH),
+  adds all four Android Rust targets and runs four `cargo check` commands with
+  the test-only `TAURI_CONFIG` override — no binary downloads, no APK/AAB.
+  Real-device pass is operator-only; see `docs/e2e-checklist.md`.
 
 ## Contracts
 
+- Android asset + probe paths: Tauri mobile `resources` are APK assets, not
+  filesystem paths. `tauri.android.conf.json` bundles the two ABI-named xray
+  binaries plus geo dat files; Kotlin `MglarouteVpnPlugin.load()` copies them
+  from `assets/` to its files dir and marks xray executable; Rust calls
+  `stage_assets` before each Android connect with the same app-data binaries
+  dir. `XrayLauncher` resolves xray and sets `XRAY_LOCATION_ASSET` from that same
+  injected app binaries dir — never `current_exe().parent()`. Probe config/PID
+  sidecars use the app cache dir injected at bootstrap; Windows keeps system
+  temp. Kotlin stops any foreground VPN session on every post-establish or
+  early `start` failure, and the service returns `START_NOT_STICKY` so a
+  process death cannot resurrect a notification with no TUN fd.
 - Desktop tray lifecycle: `CloseRequested` hides the window (process stays
   alive); tray left-click / `Open` shows and focuses `main`; tray `Exit` runs
   `disconnect_impl` then `app.exit(0)` behind an idempotent shutdown gate.

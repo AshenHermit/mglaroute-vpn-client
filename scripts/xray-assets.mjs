@@ -4,6 +4,14 @@ export const XRAY_VERSION = "v26.11.9";
 // Geo assets shipped inside each Xray release zip and bundled next to the core.
 export const GEO_ASSETS = ["geoip.dat", "geosite.dat"];
 
+// Xray v26.11.9 publishes exactly two Android assets. No armv7/x86 Android
+// zips exist — do not invent them. Names are the Tauri sidecar triples used
+// by the Android JNIlib/sidecar resolver.
+export const ANDROID_XRAY_ASSETS = [
+  { asset: "Xray-android-arm64-v8a.zip", triple: "aarch64-linux-android" },
+  { asset: "Xray-android-amd64.zip", triple: "x86_64-linux-android" },
+];
+
 const CANDIDATES = {
   win32: {
     x64: ["Xray-win7-64.zip", "Xray-windows-64.zip"],
@@ -19,6 +27,10 @@ const CANDIDATES = {
   darwin: {
     x64: ["Xray-macos-64.zip"],
     arm64: ["Xray-macos-arm64-v8a.zip"],
+  },
+  android: {
+    arm64: ["Xray-android-arm64-v8a.zip"],
+    x64: ["Xray-android-amd64.zip"],
   },
 };
 
@@ -37,6 +49,10 @@ const TARGET_TRIPLES = {
   darwin: {
     x64: "x86_64-apple-darwin",
     arm64: "aarch64-apple-darwin",
+  },
+  android: {
+    arm64: "aarch64-linux-android",
+    x64: "x86_64-linux-android",
   },
 };
 

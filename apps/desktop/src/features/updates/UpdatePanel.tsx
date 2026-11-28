@@ -18,7 +18,7 @@ export function UpdatePanel() {
 
   if (!update) {
     return (
-      <Card>
+      <Card data-testid="update-panel">
         <CardHeader>
           <CardTitle>Updates</CardTitle>
         </CardHeader>
@@ -62,7 +62,7 @@ export function UpdatePanel() {
     void perform(() => invoke("update_open_releases", z.null(), { url: update.releaseUrl }));
 
   return (
-    <Card>
+    <Card data-testid="update-panel">
       <CardHeader>
         <CardTitle>Updates</CardTitle>
       </CardHeader>

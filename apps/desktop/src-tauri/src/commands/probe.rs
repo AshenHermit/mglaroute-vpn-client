@@ -217,6 +217,7 @@ async fn run_impl_inner(
         &XrayProbeTransport,
         progress,
         cancel.clone(),
+        state.inner.temp_dir.as_deref(),
     )
     .await?;
     let cancelled = *cancel.borrow();

@@ -40,9 +40,11 @@ function RailButton({
 
 /** Left navigation rail: real filters only, real durable-data counters. */
 export function ServerRail({
+  mobile,
   onOpenSettings,
   onOpenServers,
 }: {
+  mobile: boolean;
   onOpenSettings: () => void;
   onOpenServers: () => void;
 }) {
@@ -50,9 +52,17 @@ export function ServerRail({
   const serverCount = useAppStore((store) => store.profiles.length);
   const filter = useUiStore((state) => state.filter);
   const setFilter = useUiStore((state) => state.setFilter);
-  const [antiDpi, setAntiDpi] = useState("unknown");
+  // Status text stays visible on every platform. Mobile never pays for the
+  // desktop-only probe command, and anti-DPI has no actions to expose there.
+  const [antiDpi, setAntiDpi] = useState(mobile ? "unsupported" : "unknown");
 
   useEffect(() => {
+    if (mobile) {
+      // No desktop-only probe on mobile; the status stays visible as the
+      // fixed value every anti_dpi_* command reports.
+      setAntiDpi("unsupported");
+      return;
+    }
     let active = true;
     void invoke("anti_dpi_status", AntiDpiStatusSchema)
       .then((status) => {
@@ -65,7 +75,7 @@ export function ServerRail({
     return () => {
       active = false;
     };
-  }, []);
+  }, [mobile]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 bg-card p-4">

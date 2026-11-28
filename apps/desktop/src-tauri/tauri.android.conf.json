@@ -1,0 +1,18 @@
+{
+  "plugins": {
+    "updater": null
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "resources": [
+      "binaries/xray-aarch64-linux-android",
+      "binaries/xray-x86_64-linux-android",
+      "binaries/geoip.dat",
+      "binaries/geosite.dat"
+    ],
+    "android": {
+      "minSdkVersion": 26,
+      "versionCode": 2003
+    }
+  }
+}

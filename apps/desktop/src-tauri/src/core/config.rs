@@ -348,6 +348,30 @@ fn routing(rules: Vec<Value>) -> Value {
     json!({"domainStrategy": "AsIs", "rules": rules})
 }
 
+/// Xray TUN inbound owned by Android `VpnService`. Routes and addresses stay
+/// on the Kotlin side; Xray only binds its own sockets to the physical link.
+fn tun_inbound(interface_name: &str) -> Value {
+    json!({
+        "tag": "tun-in",
+        "protocol": "tun",
+        "settings": {
+            "name": "mglaroute-tun",
+            "mtu": 1500,
+            "autoOutboundsInterface": interface_name,
+        },
+    })
+}
+
+/// Which platform the live connection config is generated for. The probe
+/// config deliberately has no platform: its cores stay `mixed` on loopback.
+pub enum ConnectionPlatform<'a> {
+    Desktop,
+    Android {
+        interface_name: &'a str,
+        dns_upstreams: &'a [String],
+    },
+}
+
 /// One config for a single probe core: one `mixed` inbound on loopback, one
 /// outbound for this profile and one routing rule tying the two together. No
 /// `direct` fallback and no exclusions — every request must use the proxy.
@@ -397,7 +421,51 @@ pub fn build_connection_config(
     rules: &[RoutingRule],
     asset_dir: Option<&Path>,
 ) -> Result<Value> {
-    let mut routing_rules = Vec::with_capacity(exclusions.len() + rules.len() * 2 + 2);
+    build_connection_config_for(snapshot, exclusions, rules, asset_dir, ConnectionPlatform::Desktop)
+}
+
+/// Platform-aware connection builder. Both platforms share one immutable
+/// snapshot, outbound set and user rule order; only the inbound, the two
+/// mandatory Android rules and DNS differ.
+pub fn build_connection_config_for<'a>(
+    snapshot: &ConfigSnapshot,
+    exclusions: &[String],
+    rules: &[RoutingRule],
+    asset_dir: Option<&Path>,
+    platform: ConnectionPlatform<'a>,
+) -> Result<Value> {
+    let (inbound, catch_all_tag, dns_upstreams) = match platform {
+        ConnectionPlatform::Desktop => (
+            mixed_inbound("proxy-in", snapshot.proxy_port),
+            "proxy-in",
+            None,
+        ),
+        ConnectionPlatform::Android {
+            interface_name,
+            dns_upstreams,
+        } => (tun_inbound(interface_name), "tun-in", Some(dns_upstreams)),
+    };
+
+    let mut routing_rules = Vec::with_capacity(exclusions.len() + rules.len() * 2 + 5);
+    let mut needs_block = false;
+    if dns_upstreams.is_some() {
+        // Unknown-owner traffic must never learn the proxy exit IP through a
+        // direct socket bound to the TUN. Keep this ahead of every other rule.
+        routing_rules.push(json!({
+            "type": "field",
+            "process": ["-1"],
+            "outboundTag": "block",
+        }));
+        // DNS arrives at the virtual address configured by VpnService. Route
+        // it through Xray's dns outbound instead of leaking to the uplink.
+        routing_rules.push(json!({
+            "type": "field",
+            "inboundTag": ["tun-in"],
+            "port": 53,
+            "outboundTag": "dns-out",
+        }));
+        needs_block = true;
+    }
     // Local/private destinations must go direct: the remote node cannot reach
     // the user's LAN, and may answer with a Cloudflare HTTP/HTTPS port error.
     routing_rules.push(json!({
@@ -414,7 +482,6 @@ pub fn build_connection_config(
         }));
     }
 
-    let mut needs_block = false;
     for rule in rules.iter().filter(|rule| rule.enabled) {
         let tag = outbound_tag(&rule.outbound);
         if tag == "block" {
@@ -442,7 +509,7 @@ pub fn build_connection_config(
 
     routing_rules.push(json!({
         "type": "field",
-        "inboundTag": ["proxy-in"],
+        "inboundTag": [catch_all_tag],
         "outboundTag": "proxy-out",
     }));
 
@@ -450,16 +517,30 @@ pub fn build_connection_config(
         build_outbound(&snapshot.profile, "proxy-out")?,
         json!({"tag": "direct", "protocol": "freedom", "settings": {}}),
     ];
+    if let Some(dns_upstreams) = dns_upstreams {
+        let address = dns_upstreams
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        outbounds.push(json!({
+            "tag": "dns-out",
+            "protocol": "dns",
+            "settings": {"address": address, "port": 53},
+        }));
+    }
     if needs_block {
         outbounds.push(json!({"tag": "block", "protocol": "blackhole", "settings": {}}));
     }
 
     let mut config = Map::new();
     config.insert("log".to_string(), json!({"loglevel": "warning"}));
-    config.insert(
-        "inbounds".to_string(),
-        json!([mixed_inbound("proxy-in", snapshot.proxy_port)]),
-    );
+    config.insert("inbounds".to_string(), json!([inbound]));
+    if let Some(dns_upstreams) = dns_upstreams {
+        config.insert(
+            "dns".to_string(),
+            json!({"tag": "dns-out", "servers": dns_upstreams}),
+        );
+    }
     config.insert("outbounds".to_string(), Value::Array(outbounds));
     config.insert("routing".to_string(), routing(routing_rules));
     if let Some(dir) = asset_dir {
@@ -983,5 +1064,137 @@ mod tests {
             "probe config must have no block outbound"
         );
         assert!(config.get("env").is_none(), "probe config must have no env");
+    }
+
+    fn android_dns() -> Vec<String> {
+        vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()]
+    }
+
+    fn android_config(rules: &[RoutingRule]) -> Value {
+        let profile = vless_profile("a", 443);
+        let snapshot = snapshot_for(&profile, 10808, Path::new("C:/tmp/xray"));
+        let dns = android_dns();
+        build_connection_config_for(
+            &snapshot,
+            &[],
+            rules,
+            None,
+            ConnectionPlatform::Android {
+                interface_name: "wlan0",
+                dns_upstreams: &dns,
+            },
+        )
+        .expect("android config")
+    }
+
+    #[test]
+    fn android_config_has_exactly_one_tun_inbound() {
+        let config = android_config(&[]);
+        let inbounds = config["inbounds"].as_array().expect("inbounds array");
+        assert_eq!(inbounds.len(), 1);
+        assert_eq!(inbounds[0]["protocol"], "tun");
+        assert_eq!(inbounds[0]["tag"], "tun-in");
+        assert!(inbounds[0].get("listen").is_none(), "tun inbound has no listen");
+        assert!(inbounds[0].get("port").is_none(), "tun inbound has no port");
+    }
+
+    #[test]
+    fn android_config_sets_interface_name_and_mtu() {
+        let config = android_config(&[]);
+        let settings = &config["inbounds"][0]["settings"];
+        assert_eq!(settings["autoOutboundsInterface"], "wlan0");
+        assert_eq!(settings["name"], "mglaroute-tun");
+        assert_eq!(settings["mtu"], 1500);
+        assert!(settings.get("gateway").is_none(), "no gateway owned by VpnService");
+        assert!(
+            settings.get("autoSystemRoutingTable").is_none(),
+            "no autoSystemRoutingTable owned by VpnService"
+        );
+    }
+
+    #[test]
+    fn android_unknown_owner_rule_is_first() {
+        let config = android_config(&[rule("proxy", &["user.example"], &[], true, 0)]);
+        let rules = rules_of(&config);
+        assert_eq!(
+            rules[0],
+            json!({"type": "field", "process": ["-1"], "outboundTag": "block"})
+        );
+    }
+
+    #[test]
+    fn android_dns_rule_precedes_user_rules() {
+        let config = android_config(&[rule("proxy", &["user.example"], &[], true, 0)]);
+        let rules = rules_of(&config);
+        let dns_index = rules
+            .iter()
+            .position(|rule| {
+                rule["inboundTag"] == json!(["tun-in"])
+                    && rule["port"] == json!(53)
+                    && rule["outboundTag"] == "dns-out"
+            })
+            .expect("port-53 DNS rule");
+        assert!(dns_index > 0, "DNS rule must follow the unknown-owner rule");
+        let user_index = rules
+            .iter()
+            .position(|rule| rule["domain"] == json!(["user.example"]))
+            .expect("user rule");
+        assert!(
+            dns_index < user_index,
+            "DNS rule must precede user routing rules"
+        );
+    }
+
+    #[test]
+    fn android_config_has_ip_literal_dns_upstreams() {
+        let config = android_config(&[]);
+        assert_eq!(config["dns"]["tag"], "dns-out");
+        let servers = config["dns"]["servers"].as_array().expect("dns servers");
+        assert!(servers.contains(&json!("8.8.8.8")));
+        assert!(servers.contains(&json!("1.1.1.1")));
+        assert!(
+            servers.iter().all(|server| server.as_str().is_some_and(|addr| addr.parse::<std::net::IpAddr>().is_ok())),
+            "DNS upstreams must be IP literals, no hostname bootstrap"
+        );
+        let outbounds = config["outbounds"].as_array().expect("outbounds");
+        let dns_out = outbounds
+            .iter()
+            .find(|outbound| outbound["tag"] == "dns-out")
+            .expect("dns-out outbound");
+        assert_eq!(dns_out["protocol"], "dns");
+        assert!(dns_out["settings"].is_object());
+
+        let catch_all = rules_of(&config)
+            .last()
+            .expect("catch-all rule")
+            .clone();
+        assert_eq!(catch_all["inboundTag"], json!(["tun-in"]));
+        assert_eq!(catch_all["outboundTag"], "proxy-out");
+    }
+
+    #[test]
+    fn build_probe_config_is_unchanged_on_android() {
+        // Probe cores use no ConnectionPlatform: they stay mixed on loopback.
+        let profile = vless_profile("a", 443);
+        let config = build_probe_config(&profile, 10801).expect("probe config");
+        let inbounds = config["inbounds"].as_array().expect("inbounds");
+        assert_eq!(inbounds.len(), 1);
+        assert_eq!(inbounds[0]["protocol"], "mixed");
+        assert_eq!(inbounds[0]["listen"], "127.0.0.1");
+        assert_eq!(inbounds[0]["port"], 10801);
+        assert!(!inbounds.iter().any(|inbound| inbound["protocol"] == "tun"));
+        assert!(config.get("dns").is_none(), "probe config must have no dns section");
+    }
+
+    #[test]
+    fn desktop_connection_config_matches_existing_shape() {
+        // Golden string recorded before Android platform support. serde_json's
+        // default Map is a BTreeMap, so keys are sorted deterministically.
+        let profile = vless_profile("a", 443);
+        let snapshot = snapshot_for(&profile, 10808, Path::new("C:/tmp/xray"));
+        let config = build_connection_config(&snapshot, &[], &[], None).expect("config");
+        let expected = r#"{"inbounds":[{"listen":"127.0.0.1","noauth":true,"port":10808,"protocol":"mixed","settings":{"auth":"noauth","noauth":true,"udp":true},"sniffing":{"enabled":false},"tag":"proxy-in"}],"log":{"loglevel":"warning"},"outbounds":[{"mux":{"enabled":false},"protocol":"vless","settings":{"vnext":[{"address":"node.example.com","port":443,"users":[{"encryption":"none","flow":"","id":"a","level":0}]}]},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"serverName":"tls.example.com"},"wsSettings":{"headers":{"Host":"h.example.com"},"path":"/p"}},"tag":"proxy-out"},{"protocol":"freedom","settings":{},"tag":"direct"}],"routing":{"domainStrategy":"AsIs","rules":[{"ip":["127.0.0.0/8","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","169.254.0.0/16","::1/128","fc00::/7","fe80::/10"],"outboundTag":"direct","type":"field"},{"inboundTag":["proxy-in"],"outboundTag":"proxy-out","type":"field"}]}}"#;
+        assert_eq!(serde_json::to_string(&config).expect("serialize"), expected);
+        assert!(config.get("dns").is_none(), "desktop config must have no dns key");
     }
 }

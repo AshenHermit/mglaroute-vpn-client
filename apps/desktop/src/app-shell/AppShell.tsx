@@ -1,4 +1,4 @@
-import { ProfileSchema, SubscriptionSchema } from "@mglaroute/contracts";
+import { PlatformInfoSchema, ProfileSchema, SubscriptionSchema } from "@mglaroute/contracts";
 import { useEffect, useState } from "react";
 import { ConnectionPanel } from "../features/connection-panel/ConnectionPanel";
 import { invoke } from "../lib/invoke";
@@ -21,9 +21,19 @@ export function AppShell() {
   const setNotice = useAppStore((store) => store.setNotice);
   const [view, setView] = useState<"servers" | "settings">("servers");
   const [bottomTab, setBottomTab] = useState<BottomTab>("connect");
+  // Session-only: no persisted platform state. Default desktop until the
+  // one-shot native call resolves, so older hosts keep their desktop surfaces.
+  const [mobile, setMobile] = useState(false);
 
   useEffect(() => {
     let active = true;
+    void invoke("platform_info", PlatformInfoSchema)
+      .then((info) => {
+        if (active) setMobile(info.mobile);
+      })
+      .catch(() => {
+        // Unknown command on older native builds: keep desktop surfaces.
+      });
     void invoke("subscription_list", SubscriptionSchema.array())
       .then((rows) => {
         if (active) setSubscriptions(rows);
@@ -78,6 +88,7 @@ export function AppShell() {
         className="order-2 min-w-0 shrink-0 border-b border-border sm:col-start-1 sm:row-span-2 sm:row-start-1 sm:min-h-0 sm:w-[72px] sm:overflow-y-auto sm:overscroll-contain sm:border-b-0 sm:border-r lg:order-1 lg:w-auto lg:row-span-1"
       >
         <ServerRail
+          mobile={mobile}
           onOpenSettings={onOpenSettings}
           onOpenServers={onOpenServers}
         />
@@ -87,7 +98,7 @@ export function AppShell() {
         data-testid="center-zone"
         className="@container order-3 min-h-0 min-w-0 shrink-0 overflow-y-auto p-4 pb-[calc(72px+env(safe-area-inset-bottom))] sm:col-start-2 sm:row-start-2 sm:min-h-0 sm:overflow-y-auto sm:overscroll-contain sm:pb-4 lg:order-2 lg:row-start-1 lg:p-6 lg:pb-6"
       >
-        {view === "settings" ? <Settings /> : <Servers />}
+        {view === "settings" ? <Settings mobile={mobile} /> : <Servers />}
       </main>
 
       <section

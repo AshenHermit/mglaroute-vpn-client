@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "event-listener-mobile",
+  "description": "Allow the frontend to listen for VPN/probe events on mobile; no desktop-only updater or shell permission.",
+  "windows": ["*"],
+  "platforms": ["iOS", "android"],
+  "permissions": ["core:event:default"]
+}
