@@ -1,7 +1,7 @@
 import AdmZip from "adm-zip";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import fs, { existsSync, mkdtempSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import fs, { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -208,20 +208,28 @@ describe("verifyBinaries", () => {
 });
 
 describe("Android binaries", () => {
-  function androidZip(payload, { geo = false } = {}) {
-    const zip = new AdmZip();
-    zip.addFile("xray", payload);
-    if (geo) {
-      for (const name of GEO_ASSETS) zip.addFile(`assets/${name}`, `${name}-android-payload`);
-    }
-    return zip.toBuffer();
+  // AdmZip's `input instanceof Uint8Array` check fails across vitest's VM
+  // realm, even for archives read from disk. Inject a deterministic archive
+  // reader so staged bytes are asserted against real, non-empty entry data.
+  function archive(entries) {
+    return {
+      getEntries: () => entries.map(({ name, data }) => ({ entryName: name, getData: () => data })),
+    };
   }
 
   function androidDownloads({ corrupt = false } = {}) {
     const byUrl = new Map();
+    const archives = new Map();
     for (const { asset, triple } of ANDROID_XRAY_ASSETS) {
-      const zip = androidZip(`${triple}-xray-payload`, { geo: triple === "aarch64-linux-android" });
-      const digest = corrupt && triple === "aarch64-linux-android"
+      const entries = [{ name: "xray", data: Buffer.from(`${triple}-xray-payload`) }];
+      if (triple === ANDROID_XRAY_ASSETS[0].triple) {
+        for (const name of GEO_ASSETS) {
+          entries.push({ name: `assets/${name}`, data: Buffer.from(`${name}-android-payload`) });
+        }
+      }
+      const zip = Buffer.from(`${asset}-archive-bytes`);
+      archives.set(zip, archive(entries));
+      const digest = corrupt && triple === ANDROID_XRAY_ASSETS[0].triple
         ? sha256Hex("wrong")
         : sha256Hex(zip);
       for (const base of [
@@ -237,6 +245,13 @@ describe("Android binaries", () => {
       if (!body) throw new Error(`unexpected URL: ${url}`);
       return body;
     });
+    return {
+      openZip: (buffer) => {
+        const found = archives.get(buffer);
+        if (!found) throw new Error("unexpected archive bytes");
+        return found;
+      },
+    };
   }
 
   function androidDir() {
@@ -244,18 +259,22 @@ describe("Android binaries", () => {
   }
 
   it("android_fetch_stages_both_sidecars_and_geo_from_arm64_only", async () => {
-    androidDownloads();
+    const { openZip } = androidDownloads();
     const dir = androidDir();
     const chmod = vi.spyOn(fs, "chmodSync");
     const io = captureConsole();
     try {
-      await fetchAndroidBinaries({ release: ANDROID_RELEASE, binDir: dir });
+      await fetchAndroidBinaries({ release: ANDROID_RELEASE, binDir: dir, openZip });
       for (const { triple } of ANDROID_XRAY_ASSETS) {
         const file = join(dir, `xray-${triple}`);
+        const payload = `${triple}-xray-payload`;
         expect(existsSync(file)).toBe(true);
-        expect(existsSync(`${file}.sha256`)).toBe(true);
+        expect(readFileSync(file, "utf8")).toBe(payload); // not an empty archive entry
+        expect(readFileSync(`${file}.sha256`, "utf8")).toBe(`sha256:${sha256Hex(payload)}\n`);
         expect(existsSync(join(dir, `xray-${triple}.exe`))).toBe(false);
       }
+      expect(readFileSync(join(dir, "geoip.dat"), "utf8")).toBe("geoip.dat-android-payload");
+      expect(readFileSync(join(dir, "geosite.dat"), "utf8")).toBe("geosite.dat-android-payload");
       expect(existsSync(join(dir, "geoip.dat"))).toBe(true);
       expect(existsSync(join(dir, "geosite.dat"))).toBe(true);
       expect(existsSync(join(dir, "geoip.dat.sha256"))).toBe(true);
@@ -329,14 +348,15 @@ describe("Android binaries", () => {
   });
 
   it("android_fetch_falls_back_to_pinned_release_without_network", async () => {
-    androidDownloads();
+    const { openZip } = androidDownloads();
     getLatestRelease.mockRejectedValueOnce(new Error("offline"));
     const dir = androidDir();
     const io = captureConsole();
     try {
-      await fetchAndroidBinaries({ binDir: dir });
-      expect(existsSync(join(dir, "xray-aarch64-linux-android"))).toBe(true);
-      expect(existsSync(join(dir, "xray-x86_64-linux-android"))).toBe(true);
+      await fetchAndroidBinaries({ binDir: dir, openZip });
+      for (const { triple } of ANDROID_XRAY_ASSETS) {
+        expect(readFileSync(join(dir, `xray-${triple}`), "utf8")).toBe(`${triple}-xray-payload`);
+      }
     } finally {
       io.restore();
       rmSync(dir, { recursive: true, force: true });
@@ -347,5 +367,11 @@ describe("Android binaries", () => {
     const release = pinnedRelease("android", "arm64");
     expect(release.tag_name).toBe("v26.11.9");
     expect(release.assets.map((a) => a.name)).toEqual(["Xray-android-arm64-v8a.zip"]);
+  });
+
+  it("android_verify_is_reachable_from_root_script_and_cli_flag", () => {
+    // Operator/CI must be able to verify a staged Android bundle by command.
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
+    expect(pkg.scripts["binaries:verify:android"]).toBe("node scripts/fetch-xray.mjs --verify-android");
   });
 });

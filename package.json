@@ -13,6 +13,7 @@
     "binaries:fetch": "node scripts/fetch-xray.mjs && node scripts/stage-antiddpi.mjs",
     "binaries:verify": "node scripts/fetch-xray.mjs --verify",
     "binaries:fetch:android": "node scripts/fetch-xray.mjs --android",
+    "binaries:verify:android": "node scripts/fetch-xray.mjs --verify-android",
     "installer:build": "dotenv -e .env -- pnpm run installer:build:inner",
     "installer:build:inner": "pnpm binaries:fetch && pnpm binaries:verify && pnpm --filter @mglaroute/desktop exec tauri build --bundles nsis",
     "version:set": "node scripts/set-version.mjs"

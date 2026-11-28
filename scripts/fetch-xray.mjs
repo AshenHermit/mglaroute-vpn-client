@@ -142,7 +142,12 @@ function resolveAndroidRelease() {
 // against its upstream .dgst before extraction; cross-compiled binaries are
 // never executed on the build host. Geo assets are staged from the arm64 zip
 // only so the bundle carries a single authenticated copy.
-export async function fetchAndroidBinaries({ release, binDir = BIN_DIR, download = getBuffer } = {}) {
+export async function fetchAndroidBinaries({
+  release,
+  binDir = BIN_DIR,
+  download = getBuffer,
+  openZip = (buffer) => new AdmZip(buffer),
+} = {}) {
   const target = release ?? (await resolveAndroidRelease());
   fs.mkdirSync(binDir, { recursive: true });
 
@@ -157,24 +162,15 @@ export async function fetchAndroidBinaries({ release, binDir = BIN_DIR, download
     const expected = parseSha256(dgstBuffer.toString("utf8"));
     if (!verifyBufferSha256(zipBuffer, expected)) throw new Error(`sha256 mismatch for ${asset}`);
 
-    // AdmZip accepts a file path reliably; a Buffer crosses VM realms in test
-    // runners and is then mistaken for an options object.
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mglaroute-android-zip-"));
-    try {
-      const zipPath = path.join(tempDir, asset);
-      fs.writeFileSync(zipPath, zipBuffer);
-      const zip = new AdmZip(zipPath);
-      const data = extractZipEntry(zip, "xray");
-      const staged = path.join(binDir, `xray-${triple}`);
-      fs.writeFileSync(staged, data);
-      fs.chmodSync(staged, 0o755);
-      fs.writeFileSync(`${staged}.sha256`, `sha256:${sha256Hex(data)}\n`);
-      console.log(`Bundled xray-${triple}`);
-      // Only the arm64 zip carries geo assets; stage them from this verified copy.
-      if (triple === ANDROID_XRAY_ASSETS[0].triple) stageGeoAssets(zip, binDir);
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
+    const zip = openZip(zipBuffer);
+    const data = extractZipEntry(zip, "xray");
+    const staged = path.join(binDir, `xray-${triple}`);
+    fs.writeFileSync(staged, data);
+    fs.chmodSync(staged, 0o755);
+    fs.writeFileSync(`${staged}.sha256`, `sha256:${sha256Hex(data)}\n`);
+    console.log(`Bundled xray-${triple}`);
+    // Only the arm64 zip carries geo assets; stage them from this verified copy.
+    if (triple === ANDROID_XRAY_ASSETS[0].triple) stageGeoAssets(zip, binDir);
   }
 
   console.log(`Bundled geo assets: ${GEO_ASSETS.join(", ")}`);
@@ -263,6 +259,13 @@ if (invokedAsCli) {
       verifyBinaries();
     } catch (error) {
       console.error(`binary verification failed: ${error.message}`);
+      process.exit(1);
+    }
+  } else if (process.argv.includes("--verify-android")) {
+    try {
+      verifyAndroidBinaries();
+    } catch (error) {
+      console.error(`Android binary verification failed: ${error.message}`);
       process.exit(1);
     }
   } else if (process.argv.includes("--android")) {
