@@ -218,7 +218,8 @@ mod tests {
     fn kotlin_service_detaches_fd_and_excludes_self() {
         let service = kotlin("MglarouteVpnService.kt");
         let plugin = kotlin("MglarouteVpnPlugin.kt");
-        let both = format!("{service}\n{plugin}");
+        let main = kotlin("MainActivity.kt");
+        let both = format!("{service}\n{plugin}\n{main}");
         for required in [
             "detachFd()",
             "startForeground",
@@ -233,19 +234,24 @@ mod tests {
             "androidx.activity.result.contract.ActivityResultContracts",
             "ParcelFileDescriptor.adoptFd(fd).close()",
             "R.drawable.ic_stat_vpn",
+            "MglarouteVpnConsent.launcher",
+            "MglarouteVpnConsent.onResult",
         ] {
             assert!(both.contains(required), "Kotlin sources missing {required}");
         }
-        let registered = plugin
+        let registered = main
             .find("registerForActivityResult")
-            .expect("plugin must register activity result callback");
-        let prepared = plugin
+            .expect("MainActivity must register the consent launcher");
+        let super_created = main
+            .find("super.onCreate(savedInstanceState)")
+            .expect("MainActivity must call super.onCreate");
+        assert!(
+            registered < super_created,
+            "consent launcher must be registered before activity reaches STARTED"
+        );
+        plugin
             .find("VpnService.prepare")
             .expect("plugin must call VpnService.prepare");
-        assert!(
-            registered < prepared,
-            "activity-result callback must be registered in load() before prepare()"
-        );
     }
 
     /// Final-review Critical 1: APK resources are assets, not filesystem

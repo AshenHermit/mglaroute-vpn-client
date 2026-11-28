@@ -14,9 +14,6 @@ import android.os.IBinder
 import android.webkit.WebView
 import java.io.File
 import java.io.FileOutputStream
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
@@ -51,19 +48,14 @@ class StageAssetsArgs {
     ],
 )
 class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
-    private var vpnPermissionLauncher: ActivityResultLauncher<Intent>? = null
     private var pendingPrepare: Invoke? = null
 
     override fun load(webView: WebView) {
         // Kotlin owns APK assets; stage them into the app files dir here so the
         // Rust launcher can resolve real filesystem paths before first connect.
         stageAssets(File(activity.filesDir, "binaries"))
-        // Register before any prepare() call: launching the consent activity
-        // needs a callback that already exists when the result comes back.
-        vpnPermissionLauncher = (activity as AppCompatActivity).registerForActivityResult(
-            ActivityResultContracts.StartActivityForResult(),
-        ) { result ->
-            val granted = result.resultCode == Activity.RESULT_OK
+        // MainActivity owns the launcher; plugin only receives the result here.
+        MglarouteVpnConsent.onResult = { granted ->
             val response = JSObject()
             response.put("granted", granted)
             pendingPrepare?.resolve(response)
@@ -136,14 +128,14 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve(response)
             return
         }
-        val launcher = vpnPermissionLauncher
-        if (launcher == null) {
-            invoke.reject("VPN consent callback is not registered", "permission_required")
-            return
-        }
         pendingPrepare?.reject("VPN consent request was superseded", "permission_required")
         pendingPrepare = invoke
-        launcher.launch(consentIntent)
+        MglarouteVpnConsent.launch(consentIntent) { granted ->
+            val response = JSObject()
+            response.put("granted", granted)
+            pendingPrepare?.resolve(response)
+            pendingPrepare = null
+        }
     }
 
     @Command
