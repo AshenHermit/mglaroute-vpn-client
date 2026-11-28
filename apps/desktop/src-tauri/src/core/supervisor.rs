@@ -3,6 +3,7 @@
 //! probing here — callers pass an immutable [`ConfigSnapshot`].
 
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -13,6 +14,8 @@ use crate::core::job::JobHandle;
 use crate::core::snapshot::ConfigSnapshot;
 
 pub const BINARY_PATH_ENV: &str = "XRAY_BINARY_PATH";
+/// Handoff key for the Android `VpnService` TUN fd. Value is a decimal fd.
+pub const XRAY_TUN_FD_ENV: &str = "XRAY_TUN_FD";
 
 #[derive(Debug, thiserror::Error)]
 pub enum SupervisorError {
@@ -27,12 +30,98 @@ pub type Result<T> = std::result::Result<T, SupervisorError>;
 /// Resolve the xray binary: `XRAY_BINARY_PATH`, then explicit override, then a
 /// sidecar next to the running executable (dev and installed builds), then the
 /// build-time bundled `binaries/xray.exe` (Windows x64) / `binaries/xray`.
+/// Android additionally prefers the ABI-named sidecar staged under
+/// `resource_dir/binaries`.
 pub fn binary_path(override_path: Option<&str>) -> PathBuf {
     let exe_dir = env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
     let env_path = env::var_os(BINARY_PATH_ENV);
-    binary_path_from(exe_dir.as_deref(), override_path, env_path.as_deref())
+    binary_path_with_resource_dir(
+        exe_dir.as_deref(),
+        override_path,
+        env_path.as_deref(),
+        None,
+    )
+}
+
+/// Sidecar file name for the current target. Android uses the exact names
+/// staged by the build (`xray-aarch64-linux-android` /
+/// `xray-x86_64-linux-android`); other targets keep the existing names.
+pub fn binary_name_for(resource_dir: Option<&Path>) -> String {
+    #[cfg(target_os = "android")]
+    {
+        let _ = resource_dir;
+        android_binary_name(env::consts::ARCH)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = resource_dir;
+        if cfg!(windows) {
+            "xray.exe".to_string()
+        } else {
+            "xray".to_string()
+        }
+    }
+}
+
+/// Pure ABI → sidecar name mapping, tested independently of the host target.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn android_binary_name(arch: &str) -> String {
+    match arch {
+        "aarch64" => "xray-aarch64-linux-android".to_string(),
+        "x86_64" => "xray-x86_64-linux-android".to_string(),
+        // Unknown ABIs keep the generic staged name rather than guessing.
+        _ => "xray".to_string(),
+    }
+}
+
+/// Candidate path for an Android sidecar under a Tauri resource directory.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn android_binary_candidate(resource_dir: &Path, arch: &str) -> Option<PathBuf> {
+    Some(
+        resource_dir
+            .join("binaries")
+            .join(android_binary_name(arch)),
+    )
+}
+
+/// Resolution used by [`binary_path`] and the Android launch path. Windows
+/// order stays: env → override → exe-dir sidecar → bundled path. On Android a
+/// staged resource-dir sidecar is preferred before those fallbacks.
+pub fn binary_path_with_resource_dir(
+    exe_dir: Option<&Path>,
+    override_path: Option<&str>,
+    env_path: Option<&OsStr>,
+    resource_dir: Option<&Path>,
+) -> PathBuf {
+    #[cfg(target_os = "android")]
+    if let Some(dir) = resource_dir {
+        if let Some(candidate) = android_binary_candidate(dir, env::consts::ARCH) {
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = resource_dir;
+
+    let name = binary_name_for(resource_dir);
+    if let Some(value) = env_path.filter(|value| !value.is_empty()) {
+        return PathBuf::from(value);
+    }
+    if let Some(value) = override_path.filter(|value| !value.is_empty()) {
+        return PathBuf::from(value);
+    }
+    if let Some(dir) = exe_dir {
+        let sidecar = dir.join(&name);
+        if sidecar.exists() {
+            return sidecar;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(name)
 }
 
 /// Windows process-creation flags that keep a console child's window hidden.
@@ -58,14 +147,90 @@ pub(crate) fn apply_hidden_console(command: &mut Command) -> &mut Command {
     command
 }
 
-/// Build a xray invocation for one snapshot. stdout/stderr go to null so raw
-/// config (which holds credentials) never reaches a log sink.
-pub fn build_command(snapshot: &ConfigSnapshot) -> Result<Command> {
-    let mut command = Command::new(binary_path(None));
+/// TUN fd handoff as `(key, decimal value)`. The fd number itself is not a
+/// secret; no config or subscription data is ever put in the environment.
+pub(crate) fn tun_fd_env_value(fd: i32) -> (&'static str, String) {
+    (XRAY_TUN_FD_ENV, fd.to_string())
+}
+
+/// Environment overrides for a launched core. Kept separate from `Command`
+/// so the fd handoff can be tested without spawning or introspecting a child.
+#[derive(Debug, Default)]
+pub(crate) struct CommandEnv {
+    overrides: Vec<(OsString, Option<OsString>)>,
+}
+
+impl CommandEnv {
+    pub(crate) fn with_tun_fd(fd: i32) -> Self {
+        let (key, value) = tun_fd_env_value(fd);
+        Self {
+            overrides: vec![(OsString::from(key), Some(OsString::from(value)))],
+        }
+    }
+
+    pub(crate) fn apply(&self, command: &mut Command) {
+        for (key, value) in &self.overrides {
+            match value {
+                Some(value) => {
+                    command.env(key, value);
+                }
+                None => {
+                    command.env_remove(key);
+                }
+            }
+        }
+    }
+}
+
+/// Build a xray invocation for one snapshot with optional TUN fd handoff.
+/// stdout/stderr go to null so raw config (which holds credentials) never
+/// reaches a log sink. Only Android callers pass `tun_fd`, so desktop commands
+/// never carry `XRAY_TUN_FD`.
+pub fn build_command_with(snapshot: &ConfigSnapshot, tun_fd: Option<i32>) -> Result<Command> {
+    let exe_dir = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    let env_path = env::var_os(BINARY_PATH_ENV);
+    let program = binary_path_with_resource_dir(
+        exe_dir.as_deref(),
+        None,
+        env_path.as_deref(),
+        exe_dir.as_deref(),
+    );
+    let mut command = Command::new(program);
     command.arg("run").arg("-c").arg(&snapshot.config_path);
     command.stdout(Stdio::null()).stderr(Stdio::null());
+    if let Some(fd) = tun_fd {
+        CommandEnv::with_tun_fd(fd).apply(&mut command);
+    }
     apply_hidden_console(&mut command);
     Ok(command)
+}
+
+/// Desktop entry point. Signature and behaviour are unchanged.
+pub fn build_command(snapshot: &ConfigSnapshot) -> Result<Command> {
+    build_command_with(snapshot, None)
+}
+
+/// Close the parent's copy of the TUN fd. The child receives its own copy via
+/// `XRAY_TUN_FD` at exec; this must be called exactly once per supplied fd.
+#[cfg(target_os = "android")]
+pub(crate) fn close_tun_fd(fd: i32) {
+    unsafe {
+        libc::close(fd);
+    }
+}
+
+/// Windows/desktop stub. Desktop callers never supply a TUN fd.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn close_tun_fd(_fd: i32) {}
+
+/// Ordered cleanup for a failed job assignment: reap the child (kill + wait),
+/// then release the fd. Injected as closures so the order is testable without
+/// a real spawn.
+pub(crate) fn cleanup_failed_job_assignment(stop_child: impl FnOnce(), close_fd: impl FnOnce()) {
+    stop_child();
+    close_fd();
 }
 
 /// Poll a loopback TCP listener until it accepts or the deadline passes.
@@ -99,15 +264,7 @@ impl ChildGuard {
     /// is supplied. A failed assignment kills and waits for the child before
     /// surfacing the error — an unmanaged core is never left running.
     pub fn spawn(snapshot: &ConfigSnapshot, job: Option<&JobHandle>) -> Result<Self> {
-        let mut child = build_command(snapshot)?.spawn()?;
-        if let Some(job) = job {
-            if let Err(error) = job.assign(&child) {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(SupervisorError::Spawn(error));
-            }
-        }
-        Ok(Self { child })
+        spawn_with(snapshot, job, None)
     }
 
     /// Adopt an already spawned child (e.g. a temporary core for probing).
@@ -146,6 +303,55 @@ impl Drop for ChildGuard {
     }
 }
 
+/// Spawn a core for `snapshot`, optionally handing a TUN fd to the child.
+/// `tun_fd` is consumed exactly once: on a spawn failure, on job-assignment
+/// failure (after kill + wait), and on success once the child owns its copy.
+/// Job assignment failure never leaves an unmanaged child running.
+pub fn spawn_with(
+    snapshot: &ConfigSnapshot,
+    job: Option<&JobHandle>,
+    tun_fd: Option<i32>,
+) -> Result<ChildGuard> {
+    let mut command = match build_command_with(snapshot, tun_fd) {
+        Ok(command) => command,
+        Err(error) => {
+            if let Some(fd) = tun_fd {
+                close_tun_fd(fd);
+            }
+            return Err(error);
+        }
+    };
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            if let Some(fd) = tun_fd {
+                close_tun_fd(fd);
+            }
+            return Err(SupervisorError::Spawn(error));
+        }
+    };
+    if let Some(job) = job {
+        if let Err(error) = job.assign(&child) {
+            cleanup_failed_job_assignment(
+                || {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                },
+                || {
+                    if let Some(fd) = tun_fd {
+                        close_tun_fd(fd);
+                    }
+                },
+            );
+            return Err(SupervisorError::Spawn(error));
+        }
+    }
+    if let Some(fd) = tun_fd {
+        close_tun_fd(fd);
+    }
+    Ok(ChildGuard { child })
+}
+
 /// Pure resolution helper used by [`binary_path`] and tested without touching
 /// the real executable directory.
 pub fn binary_path_from(
@@ -153,21 +359,7 @@ pub fn binary_path_from(
     override_path: Option<&str>,
     env_path: Option<&std::ffi::OsStr>,
 ) -> PathBuf {
-    if let Some(value) = env_path.filter(|value| !value.is_empty()) {
-        return PathBuf::from(value);
-    }
-    if let Some(value) = override_path.filter(|value| !value.is_empty()) {
-        return PathBuf::from(value);
-    }
-    if let Some(dir) = exe_dir {
-        let sidecar = dir.join(if cfg!(windows) { "xray.exe" } else { "xray" });
-        if sidecar.exists() {
-            return sidecar;
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(if cfg!(windows) { "xray.exe" } else { "xray" })
+    binary_path_with_resource_dir(exe_dir, override_path, env_path, None)
 }
 
 #[cfg(test)]
@@ -509,6 +701,77 @@ mod tests {
                 .is_some_and(|parent| parent.ends_with("binaries")),
             "bundled binary should live under binaries/: {}",
             bundled.display()
+        );
+    }
+
+    fn command_env_map(snapshot: &ConfigSnapshot, fd: Option<i32>) -> Vec<(String, Option<String>)> {
+        let command = build_command_with(snapshot, fd).expect("command with fd");
+        command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tun_fd_env_value_is_xray_tun_fd() {
+        let (key, value) = tun_fd_env_value(17);
+        assert_eq!(key, "XRAY_TUN_FD");
+        assert_eq!(value, "17");
+    }
+
+    #[test]
+    fn build_command_without_fd_has_no_tun_env() {
+        let snapshot = test_snapshot();
+        let map = command_env_map(&snapshot, None);
+        assert!(
+            !map.iter().any(|(key, _)| key == "XRAY_TUN_FD"),
+            "unexpected TUN fd env: {map:?}"
+        );
+    }
+
+    #[test]
+    fn build_command_with_fd_sets_tun_env() {
+        let snapshot = test_snapshot();
+        let map = command_env_map(&snapshot, Some(17));
+        assert_eq!(
+            map.iter()
+                .find(|(key, _)| key == "XRAY_TUN_FD")
+                .map(|(_, value)| value.as_deref()),
+            Some(Some("17")),
+            "unexpected TUN fd env: {map:?}"
+        );
+    }
+
+    #[test]
+    fn spawn_with_failed_job_assignment_closes_fd() {
+        let log = std::cell::RefCell::new(Vec::new());
+        cleanup_failed_job_assignment(
+            || {
+                log.borrow_mut().push("kill");
+                log.borrow_mut().push("wait");
+            },
+            || log.borrow_mut().push("close"),
+        );
+        assert_eq!(log.into_inner(), ["kill", "wait", "close"]);
+    }
+
+    #[test]
+    fn android_binary_name_for_aarch64() {
+        assert_eq!(android_binary_name("aarch64"), "xray-aarch64-linux-android");
+        assert_eq!(android_binary_name("x86_64"), "xray-x86_64-linux-android");
+    }
+
+    #[test]
+    fn android_binary_candidate_under_resource_dir() {
+        let resource = Path::new("/data/app/mglaroute");
+        assert_eq!(
+            android_binary_candidate(resource, "aarch64"),
+            Some(resource.join("binaries").join("xray-aarch64-linux-android"))
         );
     }
 }
