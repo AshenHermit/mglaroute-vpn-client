@@ -214,12 +214,20 @@ async fn connect_impl_android(
     };
 
     let established = wait_tun_established(state).await;
-    let alive = child
+    let alive = match child
         .as_mut()
         .map(|handle| handle.try_wait().map(|exited| !exited))
         .transpose()
-        .map_err(|_| CommandError::Core)?
-        .unwrap_or(false);
+    {
+        Ok(alive) => alive.unwrap_or(false),
+        // A failed liveness check cannot leave the VPN session active, the
+        // temp config on disk or an unowned fd: same cleanup as a dead core.
+        Err(_) => {
+            android_cleanup(state, &mut child, &Some(snapshot.config_path.clone())).await;
+            mark_faulted(state).await;
+            return Err(CommandError::Core);
+        }
+    };
     if !established || !alive {
         android_cleanup(state, &mut child, &Some(snapshot.config_path.clone())).await;
         mark_faulted(state).await;
@@ -631,6 +639,7 @@ mod tests {
     struct TestHandle {
         exited: Arc<AtomicBool>,
         log: Log,
+        try_wait_error: bool,
     }
 
     impl CoreHandle for TestHandle {
@@ -641,6 +650,9 @@ mod tests {
         }
 
         fn try_wait(&mut self) -> Result<bool, String> {
+            if self.try_wait_error {
+                return Err("poll failed".to_string());
+            }
             Ok(self.exited.load(Ordering::SeqCst))
         }
     }
@@ -650,6 +662,7 @@ mod tests {
         log: Log,
         exited: Arc<AtomicBool>,
         fail: bool,
+        try_wait_error: bool,
     }
 
     impl CoreLauncher for TestLauncher {
@@ -677,6 +690,7 @@ mod tests {
             Ok(Box::new(TestHandle {
                 exited: self.exited.clone(),
                 log: self.log.clone(),
+                try_wait_error: self.try_wait_error,
             }))
         }
     }
@@ -690,7 +704,19 @@ mod tests {
         dir: tempfile::TempDir,
     }
 
-    fn android_state(mut vpn: FakeVpnBackend, fail_launch: bool) -> Harness {
+    fn android_state(vpn: FakeVpnBackend, fail_launch: bool) -> Harness {
+        android_state_inner(vpn, fail_launch, false)
+    }
+
+    fn android_state_with_try_wait_error(vpn: FakeVpnBackend) -> Harness {
+        android_state_inner(vpn, false, true)
+    }
+
+    fn android_state_inner(
+        mut vpn: FakeVpnBackend,
+        fail_launch: bool,
+        try_wait_error: bool,
+    ) -> Harness {
         let dir = tempfile::tempdir().expect("tempdir");
         let conn = Connection::open_in_memory().expect("open in-memory db");
         migrate(&conn).expect("migrate");
@@ -731,6 +757,7 @@ mod tests {
             log: log.clone(),
             exited: exited.clone(),
             fail: fail_launch,
+            try_wait_error,
         };
         let state = AppState::new_with_vpn(
             conn,
@@ -825,6 +852,7 @@ mod tests {
             runtime.child = Some(Box::new(TestHandle {
                 exited: harness.exited.clone(),
                 log: harness.log.clone(),
+                try_wait_error: false,
             }));
             runtime.tun_fd = Some(7);
             runtime.vpn_active = true;
@@ -861,6 +889,7 @@ mod tests {
             runtime.child = Some(Box::new(TestHandle {
                 exited: harness.exited.clone(),
                 log: harness.log.clone(),
+                try_wait_error: false,
             }));
             runtime.vpn_active = true;
             runtime.config_path = Some(config_path.clone());
@@ -897,6 +926,40 @@ mod tests {
         assert!(runtime.child.is_none());
         assert_eq!(runtime.connection.status, ConnectionStatus::Faulted);
         assert!(harness.vpn.calls().contains(&"stop"));
+    }
+
+    #[tokio::test]
+    async fn android_try_wait_failure_cleans_up_vpn_and_fd() {
+        let harness = android_state_with_try_wait_error(FakeVpnBackend::default());
+        let config_path = harness.dir.path().join("xray-p-1-10808.json");
+
+        let error = connect(&harness).await.expect_err("liveness poll failure");
+        assert_eq!(error, CommandError::Core);
+        assert_eq!(harness.log.count("fd-close"), 1);
+        assert_eq!(
+            harness.log.all(),
+            vec!["fd-close", "core-stop", "vpn-stop"],
+            "launch consumes the fd once; cleanup stops core then VPN without a second fd close"
+        );
+        assert!(harness.vpn.calls().contains(&"stop"));
+        assert!(!config_path.exists(), "temp config must be removed");
+        let runtime = harness.state.inner.runtime.lock().await;
+        assert!(runtime.tun_fd.is_none());
+        assert!(!runtime.vpn_active, "VPN session must not stay active");
+        assert!(runtime.child.is_none());
+        assert!(runtime.config_path.is_none());
+        assert_eq!(runtime.connection.status, ConnectionStatus::Faulted);
+        // Ruling 10 order: DNS is fetched before the physical interface name.
+        assert_eq!(
+            harness.vpn.calls(),
+            vec![
+                "prepare",
+                "dns_upstreams",
+                "physical_interface",
+                "start",
+                "stop"
+            ]
+        );
     }
 
     #[tokio::test]

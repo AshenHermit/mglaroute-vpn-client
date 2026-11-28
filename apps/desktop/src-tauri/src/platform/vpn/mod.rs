@@ -133,8 +133,8 @@ impl Default for FakeVpnBackend {
 }
 
 impl FakeVpnBackend {
-    /// Recorded backend calls in order (`prepare`, `physical_interface`,
-    /// `dns_upstreams`, `start`, `stop`).
+    /// Recorded backend calls in order (`prepare`, `dns_upstreams`,
+    /// `physical_interface`, `start`, `stop`).
     pub fn calls(&self) -> Vec<&'static str> {
         self.calls
             .lock()
