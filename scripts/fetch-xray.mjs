@@ -5,7 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { downloadPair, getBuffer, getLatestRelease } from "./http-get.mjs";
-import { GEO_ASSETS, pinnedRelease, selectAsset, targetTriple } from "./xray-assets.mjs";
+import {
+  ANDROID_XRAY_ASSETS,
+  GEO_ASSETS,
+  pinnedRelease,
+  selectAsset,
+  targetTriple,
+  XRAY_VERSION,
+} from "./xray-assets.mjs";
 import { parseSha256, sha256Hex, verifyBufferSha256, verifyFileSha256 } from "./verify-sha256.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -114,13 +121,103 @@ async function fetchBinary() {
   console.log(`Bundled geo assets: ${GEO_ASSETS.join(", ")}`);
 }
 
+function pinnedAndroidRelease() {
+  const tag = process.env.XRAY_VERSION || XRAY_VERSION;
+  const assets = ["arm64", "x64"].flatMap((arch) => {
+    const release = pinnedRelease("android", arch, tag);
+    return release.assets.flatMap((asset) => [
+      asset,
+      { name: `${asset.name}.dgst`, browser_download_url: `${asset.browser_download_url}.dgst` },
+    ]);
+  });
+  return { tag_name: tag, assets };
+}
+
+function resolveAndroidRelease() {
+  if (process.env.XRAY_VERSION) return pinnedAndroidRelease();
+  return getLatestRelease().catch(() => pinnedAndroidRelease());
+}
+
+// Stage one Tauri sidecar per published Android asset. Each zip is verified
+// against its upstream .dgst before extraction; cross-compiled binaries are
+// never executed on the build host. Geo assets are staged from the arm64 zip
+// only so the bundle carries a single authenticated copy.
+export async function fetchAndroidBinaries({ release, binDir = BIN_DIR, download = getBuffer } = {}) {
+  const target = release ?? (await resolveAndroidRelease());
+  fs.mkdirSync(binDir, { recursive: true });
+
+  for (const { asset, triple } of ANDROID_XRAY_ASSETS) {
+    const selected = target.assets?.find((a) => a.name === asset);
+    if (!selected) throw new Error(`No xray asset found: ${asset}`);
+    const zipUrl = selected.browser_download_url;
+    const dgstAsset = target.assets?.find((a) => a.name === `${asset}.dgst`);
+    const dgstUrl = dgstAsset?.browser_download_url ?? `${zipUrl}.dgst`;
+
+    const [zipBuffer, dgstBuffer] = await downloadPair(download, zipUrl, dgstUrl);
+    const expected = parseSha256(dgstBuffer.toString("utf8"));
+    if (!verifyBufferSha256(zipBuffer, expected)) throw new Error(`sha256 mismatch for ${asset}`);
+
+    // AdmZip accepts a file path reliably; a Buffer crosses VM realms in test
+    // runners and is then mistaken for an options object.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mglaroute-android-zip-"));
+    try {
+      const zipPath = path.join(tempDir, asset);
+      fs.writeFileSync(zipPath, zipBuffer);
+      const zip = new AdmZip(zipPath);
+      const data = extractZipEntry(zip, "xray");
+      const staged = path.join(binDir, `xray-${triple}`);
+      fs.writeFileSync(staged, data);
+      fs.chmodSync(staged, 0o755);
+      fs.writeFileSync(`${staged}.sha256`, `sha256:${sha256Hex(data)}\n`);
+      console.log(`Bundled xray-${triple}`);
+      // Only the arm64 zip carries geo assets; stage them from this verified copy.
+      if (triple === ANDROID_XRAY_ASSETS[0].triple) stageGeoAssets(zip, binDir);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  console.log(`Bundled geo assets: ${GEO_ASSETS.join(", ")}`);
+}
+
+export function verifyAndroidBinaries(options = {}) {
+  return verifyBinaries({ ...options, android: true });
+}
+
 export function verifyBinaries(options = {}) {
   const {
     binDir = BIN_DIR,
     platform = PLATFORM,
     arch = ARCH,
     xrayBinaryPath = process.env.XRAY_BINARY_PATH,
+    android = false,
   } = options;
+
+  if (android) {
+    const missing = [];
+    for (const { triple } of ANDROID_XRAY_ASSETS) {
+      const file = path.join(binDir, `xray-${triple}`);
+      const sidecar = path.join(binDir, `xray-${triple}.sha256`);
+      if (!fs.existsSync(file)) missing.push(`xray-${triple}`);
+      if (!fs.existsSync(sidecar)) missing.push(`xray-${triple}.sha256`);
+    }
+    for (const name of GEO_ASSETS) {
+      if (!fs.existsSync(path.join(binDir, name))) missing.push(name);
+      if (!fs.existsSync(path.join(binDir, `${name}.sha256`))) missing.push(`${name}.sha256`);
+    }
+    if (missing.length) throw new Error(`missing Android bundle: ${missing.join(", ")}`);
+    for (const { triple } of ANDROID_XRAY_ASSETS) {
+      const file = path.join(binDir, `xray-${triple}`);
+      verifyFileSha256(file, fs.readFileSync(`${file}.sha256`, "utf8"));
+    }
+    for (const name of GEO_ASSETS) {
+      verifyFileSha256(path.join(binDir, name), fs.readFileSync(path.join(binDir, `${name}.sha256`), "utf8"));
+    }
+    // Android has no Windows anti-DPI assets and cannot execute host -version.
+    console.log("Android binary bundle verified");
+    return;
+  }
+
   const ext = platform === "win32" ? ".exe" : "";
   const triple = targetTriple(platform, arch);
   const simple = path.join(binDir, `xray${ext}`);
@@ -168,6 +265,11 @@ if (invokedAsCli) {
       console.error(`binary verification failed: ${error.message}`);
       process.exit(1);
     }
+  } else if (process.argv.includes("--android")) {
+    fetchAndroidBinaries().catch((error) => {
+      console.error(`Android xray fetch failed: ${error.message}`);
+      process.exit(1);
+    });
   } else {
     fetchBinary().catch((error) => {
       console.error(`xray fetch failed: ${error.message}`);
