@@ -247,19 +247,22 @@ option) and produces a platform-specific inbound set from the same snapshot:
 
 ### 6. Binary and asset pipeline
 
-- Extend `scripts/fetch-xray.mjs` with an Android matrix using official assets:
-  `Xray-android-arm64-v8a.zip`, `Xray-android-armeabi-v7a.zip`,
-  `Xray-android-x86_64.zip` (plus `.dgst` verification), while keeping the
-  Windows host asset.
-- Rename staged binaries to Tauri sidecar triples:
-  `xray-aarch64-linux-android`, `xray-armv7-linux-androideabi`,
-  `xray-i686-linux-android`, `xray-x86_64-linux-android`; Windows keeps
-  `xray-x86_64-pc-windows-msvc.exe`.
+- Extend `scripts/fetch-xray.mjs` with an Android matrix using the two official
+  published assets: `Xray-android-arm64-v8a.zip` and `Xray-android-amd64.zip`
+  (plus `.dgst` verification), while keeping the Windows host asset. No
+  armv7/x86 Android release zips exist — do not invent them.
+- Stage exactly two Android sidecars, named by Tauri triple:
+  `xray-aarch64-linux-android` and `xray-x86_64-linux-android`; Windows keeps
+  `xray-x86_64-pc-windows-msvc.exe`. `armv7-linux-androideabi` and
+  `i686-linux-android` are Rust compile-only targets in CI (`check-android`),
+  not shipped Android binaries.
 - `core::supervisor::binary_path` must resolve the Android sidecar via
   `resource_dir().join("binaries")` (Tauri extracts sidecars there on mobile),
   not only `current_exe().parent()` / `CARGO_MANIFEST_DIR`.
-- Geo assets continue to come from `resource_dir()/binaries`; build fails if
-  missing. Anti-DPI assets are excluded from Android by the config overlay.
+- `geoip.dat` / `geosite.dat` come from the verified arm64 Android zip and are
+  staged alongside the sidecars; they continue to be read from
+  `resource_dir()/binaries`, and the build fails if missing. Anti-DPI assets are
+  excluded from Android by the config overlay.
 
 ### 7. UI and CI
 
