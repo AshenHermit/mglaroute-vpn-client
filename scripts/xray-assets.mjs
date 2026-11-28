@@ -1,6 +1,9 @@
 // Xray release asset mapping. Mirrors the server's backend/scripts/xray-assets.mjs.
 export const XRAY_VERSION = "v26.11.9";
 
+// Geo assets shipped inside each Xray release zip and bundled next to the core.
+export const GEO_ASSETS = ["geoip.dat", "geosite.dat"];
+
 const CANDIDATES = {
   win32: {
     x64: ["Xray-win7-64.zip", "Xray-windows-64.zip"],

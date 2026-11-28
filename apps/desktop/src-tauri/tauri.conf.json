@@ -34,7 +34,9 @@
       "binaries/xray"
     ],
     "resources": [
-      "binaries/antiddpi/**/*"
+      "binaries/antiddpi/**/*",
+      "binaries/geoip.dat",
+      "binaries/geosite.dat"
     ],
     "createUpdaterArtifacts": true
   },

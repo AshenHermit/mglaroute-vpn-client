@@ -29,6 +29,7 @@ use crate::storage::repos::{settings_repo, subscription_repo};
 
 pub mod connection;
 pub mod probe;
+pub mod routing;
 pub mod service_profile;
 pub mod settings;
 pub mod subscription;
@@ -36,6 +37,11 @@ pub mod update;
 
 pub use connection::{connection_connect, connection_disconnect, connection_status};
 pub use probe::{best_eligible_profile, probe_cancel, probe_run, profile_list};
+pub use routing::{
+    routing_profile_activate, routing_profile_create, routing_profile_list,
+    routing_profile_remove, routing_profile_update, routing_rule_create, routing_rule_list,
+    routing_rule_remove, routing_rule_reorder, routing_rule_update,
+};
 pub use service_profile::{
     service_profile_create, service_profile_list, service_profile_remove, service_profile_update,
 };
@@ -176,6 +182,9 @@ struct AppStateInner {
     mutation_guard: MutationGuard,
     runtime: Mutex<RuntimeState>,
     config_dir: PathBuf,
+    /// Directory holding bundled geoip/geosite dat files. Sent to xray via
+    /// `XRAY_LOCATION_ASSET` in generated configs; `None` in tests.
+    asset_dir: Option<PathBuf>,
     launcher: Box<dyn CoreLauncher>,
     job: Arc<JobHandle>,
     // Guarded by a std Mutex so `probe_cancel` can check "running" and send the
@@ -229,6 +238,7 @@ impl AppState {
                     last_switch: None,
                 }),
                 config_dir,
+                asset_dir: None,
                 launcher,
                 job,
                 probe_running: std::sync::Mutex::new(false),
@@ -312,7 +322,10 @@ impl AppState {
 /// cores bind their own loopback proxy and never touch the system proxy, so
 /// cleanup ordering relative to proxy restore is irrelevant. No auto-connect:
 /// the operator decides when to reconnect.
-pub fn bootstrap(dir: &Path) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
+pub fn bootstrap(
+    dir: &Path,
+    asset_dir: Option<PathBuf>,
+) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;
     let mut conn = Connection::open(dir.join("client.db"))?;
     migrate(&conn)?;
@@ -328,13 +341,22 @@ pub fn bootstrap(dir: &Path) -> std::result::Result<AppState, Box<dyn std::error
         proxy.restore(&previous)?;
     }
 
-    Ok(AppState::new_with_job(
+    let mut state = AppState::new_with_job(
         conn,
         dir.to_path_buf(),
         proxy,
         Box::new(XrayLauncher { job: job.clone() }),
         job,
-    ))
+    );
+    // The production state is still uniquely owned here, so install the
+    // bundled asset directory without widening the public constructors.
+    // A clone before this point would silently drop geo assets, so fail loudly.
+    if let Some(dir) = asset_dir {
+        let inner = Arc::get_mut(&mut state.inner)
+            .expect("bootstrap state must be uniquely owned when installing asset_dir");
+        inner.asset_dir = Some(dir);
+    }
+    Ok(state)
 }
 
 fn exclusions(settings: &Settings) -> Vec<String> {
@@ -964,6 +986,16 @@ mod tests {
                 "probe_cancel",
                 "probe_run",
                 "profile_list",
+                "routing_profile_activate",
+                "routing_profile_create",
+                "routing_profile_list",
+                "routing_profile_remove",
+                "routing_profile_update",
+                "routing_rule_create",
+                "routing_rule_list",
+                "routing_rule_remove",
+                "routing_rule_reorder",
+                "routing_rule_update",
                 "service_profile_create",
                 "service_profile_list",
                 "service_profile_remove",

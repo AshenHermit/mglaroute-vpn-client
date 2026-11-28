@@ -79,6 +79,15 @@ docs/superpowers/specs/   design docs
    with cooldown. Only servers passing all active service profiles are eligible.
 6. connect/disconnect using system proxy on Windows (WinInet + registry, no admin).
    Restore previous proxy state on disconnect. TUN is a later feature.
+7. Routing profiles in Settings → Routing: named profiles with enable/active flags,
+   ordered rules with remark, enabled, outbound (`proxy`/`direct`/`block`), domain
+   and IP/CIDR lists (plain values plus `geosite:`/`geoip:` tags). Rules are read
+   from SQLite and applied only when generating a fresh connect/reconnect config;
+   a running core is never mutated. Builds bundle `geoip.dat` and `geosite.dat`
+   from `xray-core` release assets next to xray; `XRAY_LOCATION_ASSET` points at
+   `resource_dir/binaries`. Missing geo assets are a build error — no silent
+   fallback. UI keeps routing state local (no Zustand persist); no drag-and-drop,
+   import/export, port/protocol/network/inboundTag/process fields, or DNS rules.
 
 ## Not in MVP (current limitations)
 

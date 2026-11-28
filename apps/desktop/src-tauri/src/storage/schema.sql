@@ -78,3 +78,27 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 INSERT OR IGNORE INTO settings (id) VALUES (1);
+
+CREATE TABLE IF NOT EXISTS routing_profiles (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_routing_profiles_active ON routing_profiles(is_active, enabled);
+CREATE TABLE IF NOT EXISTS routing_rules (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL REFERENCES routing_profiles(id) ON DELETE CASCADE,
+  remark TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  outbound TEXT NOT NULL CHECK (outbound IN ('proxy','direct','block')),
+  domains TEXT NOT NULL DEFAULT '[]',
+  ips TEXT NOT NULL DEFAULT '[]',
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_routing_rules_profile_sort ON routing_rules(profile_id, sort, id);

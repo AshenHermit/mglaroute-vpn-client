@@ -87,6 +87,13 @@ describe("release config wiring", () => {
     contains(workflow, '$expected = "v$version"');
   });
 
+  it("bundles geoip.dat and geosite.dat as Tauri resources", () => {
+    const config = JSON.parse(tauriConfig);
+    const resources = config?.bundle?.resources ?? [];
+    assert.ok(resources.includes("binaries/geoip.dat"), "expected binaries/geoip.dat in bundle.resources");
+    assert.ok(resources.includes("binaries/geosite.dat"), "expected binaries/geosite.dat in bundle.resources");
+  });
+
   it("Tauri config enables updater artifacts and points at the releases latest.json", () => {
     contains(tauriConfig, "createUpdaterArtifacts");
     contains(

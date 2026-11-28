@@ -47,6 +47,16 @@ command_list!(
     probe_run,
     probe_cancel,
     profile_list,
+    routing_profile_list,
+    routing_profile_create,
+    routing_profile_update,
+    routing_profile_activate,
+    routing_profile_remove,
+    routing_rule_list,
+    routing_rule_create,
+    routing_rule_update,
+    routing_rule_remove,
+    routing_rule_reorder,
     connection_status,
     connection_connect,
     connection_disconnect,
@@ -87,7 +97,12 @@ pub fn run() {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             // Startup restore happens before either scheduler loop is spawned.
             // No auto-connect: proxy state is restored, the operator connects.
-            let state = commands::bootstrap(&dir)?;
+            let asset_dir = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(|path| path.join("binaries"));
+            let state = commands::bootstrap(&dir, asset_dir)?;
             trace_startup_phase(started, "bootstrap");
             app.manage(state.clone());
 

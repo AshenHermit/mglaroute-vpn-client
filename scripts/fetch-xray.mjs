@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { downloadPair, getBuffer, getLatestRelease } from "./http-get.mjs";
-import { pinnedRelease, selectAsset, targetTriple } from "./xray-assets.mjs";
+import { GEO_ASSETS, pinnedRelease, selectAsset, targetTriple } from "./xray-assets.mjs";
 import { parseSha256, sha256Hex, verifyBufferSha256, verifyFileSha256 } from "./verify-sha256.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -24,13 +24,47 @@ function resolveRelease() {
   return getLatestRelease().catch(() => pinnedRelease(PLATFORM, ARCH));
 }
 
-function extractBinary(zipBuffer) {
-  const zip = new AdmZip(zipBuffer);
-  const entry = zip.getEntries().find((e) => /(^|\/)xray(\.exe)?$/i.test(e.entryName));
-  if (!entry) throw new Error("xray binary not found in downloaded archive");
+function findZipEntry(zip, name) {
+  const wanted = name.toLowerCase();
+  return zip.getEntries().find((e) => {
+    const lower = e.entryName.toLowerCase();
+    return lower === wanted || lower.endsWith(`/${wanted}`);
+  });
+}
+
+// Read a named entry from a verified release zip by basename. Callers verify
+// the zip digest before constructing the archive; this helper only selects the
+// entry to stage.
+export function extractZipEntry(zip, name) {
+  const entry = findZipEntry(zip, name);
+  if (!entry) throw new Error(`${name} not found in downloaded archive`);
+  return entry.getData();
+}
+
+// Stage geo assets only when the zip's published sidecar matches the extracted
+// bytes. Computing the digest from the bytes alone would bless corrupted data.
+export function stageGeoAssets(zip, binDir) {
+  const staged = [];
+  for (const name of GEO_ASSETS) {
+    const data = extractZipEntry(zip, name);
+    const digestText = extractZipEntry(zip, `${name}.sha256`).toString("utf8");
+    if (!verifyBufferSha256(data, digestText)) {
+      throw new Error(`sha256 mismatch for ${name} in downloaded archive`);
+    }
+    staged.push({ name, data, digest: sha256Hex(data) });
+  }
+  for (const { name, data, digest } of staged) {
+    fs.writeFileSync(path.join(binDir, name), data);
+    fs.writeFileSync(path.join(binDir, `${name}.sha256`), `sha256:${digest}\n`);
+  }
+}
+
+function extractBinary(zip) {
+  const data = extractZipEntry(zip, PLATFORM === "win32" ? "xray.exe" : "xray");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mglaroute-xray-"));
-  zip.extractEntryTo(entry, tempDir, false, true);
-  return path.join(tempDir, path.basename(entry.entryName));
+  const extracted = path.join(tempDir, PLATFORM === "win32" ? "xray.exe" : "xray");
+  fs.writeFileSync(extracted, data);
+  return extracted;
 }
 
 function checkVersion(binary) {
@@ -59,7 +93,8 @@ async function fetchBinary() {
     throw new Error(`sha256 mismatch for ${asset.name}`);
   }
 
-  const extracted = extractBinary(zipBuffer);
+  const zip = new AdmZip(zipBuffer);
+  const extracted = extractBinary(zip);
   fs.mkdirSync(BIN_DIR, { recursive: true });
   fs.copyFileSync(extracted, SIMPLE);
   fs.copyFileSync(extracted, SUITED);
@@ -69,8 +104,11 @@ async function fetchBinary() {
   }
   fs.writeFileSync(SHA_FILE, `sha256:${sha256Hex(fs.readFileSync(SUITED))}\n`);
 
+  stageGeoAssets(zip, BIN_DIR);
+
   console.log(checkVersion(SUITED).trim());
   console.log(`Bundled xray${EXT} and xray-${TRIPLE}${EXT}`);
+  console.log(`Bundled geo assets: ${GEO_ASSETS.join(", ")}`);
 }
 
 export function verifyBinaries(options = {}) {
@@ -100,6 +138,13 @@ export function verifyBinaries(options = {}) {
     for (const candidate of [simple, suited]) {
       if (!fs.existsSync(candidate)) throw new Error(`missing bundled xray: ${path.basename(candidate)}`);
       verifyFileSha256(candidate, shaText);
+    }
+    for (const name of GEO_ASSETS) {
+      const file = path.join(binDir, name);
+      const sidecar = path.join(binDir, `${name}.sha256`);
+      if (!fs.existsSync(file)) throw new Error(`missing bundled geo asset: ${name}`);
+      if (!fs.existsSync(sidecar)) throw new Error(`missing bundled geo asset digest: ${name}.sha256`);
+      verifyFileSha256(file, fs.readFileSync(sidecar, "utf8"));
     }
     console.log(checkVersion(suited).trim());
   }

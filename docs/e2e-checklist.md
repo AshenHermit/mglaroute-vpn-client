@@ -9,7 +9,9 @@ registry. Run them in this order on Windows desktop.
 - Build machine with a real xray binary: `pnpm binaries:fetch` (or a dev run with
   `XRAY_BINARY_PATH` pointing at a real binary). This checkout has **no** binary —
   `pnpm binaries:verify` fails here with `ENOENT ... xray.exe.sha256`. Do not run
-  these checks against this checkout.
+  these checks against this checkout. Routing checks (step 18) also need the
+  bundled `geoip.dat` and `geosite.dat` assets staged next to xray under
+  `binaries/`; a missing asset fails the build, it is not silently skipped.
 - Working subscription URL that returns text with `vmess://`, `vless://`, `ss://`
   or `trojan://` links (`GET /api/feed?format=subscription` also works).
 - Two test URLs that return 2xx through the proxy and at least one that does not.
@@ -19,9 +21,10 @@ registry. Run them in this order on Windows desktop.
   a signed NSIS setup, `.sig` and `latest.json`, and `plugins.updater.pubkey`
   matching the signing key. The release-page fallback needs only the releases URL.
 
-Legend: **binary** = needs the real bundled xray binary; **Windows** = needs a real
-Windows registry run; **network** = needs live subscription/test URLs; **update** =
-needs a published signed release with a newer version. All steps are manual.
+Legend: **binary** = needs the real bundled xray binary (including geo assets);
+**Windows** = needs a real Windows registry run; **network** = needs live
+subscription/test URLs; **update** = needs a published signed release with a newer
+version. All steps are manual.
 
 ## Steps
 
@@ -180,6 +183,21 @@ needs a published signed release with a newer version. All steps are manual.
     system browser via Rust `shell::open`, not the WebView. No download/install
     runs and proxy/core state is unchanged; a failed install leaves the button
     clickable again.
+
+18. **Routing rules apply on a fresh connect, with bundled geo assets.** (binary, Windows, network)
+    Open **Settings → Routing**. Add a profile, click **Activate** on it, and add
+    rules: one `direct` rule with a `geosite:private` domain and `geoip:private` IP,
+    one `block` rule with `reg.ru` and `10.0.0.0/8`. Toggle a rule off and back on,
+    use **Move up** / **Move down**, then connect (step 4) and, while connected,
+    reconnect via a fresh config.
+    Expected: rules appear in profile order, remark/outbound/domain/IP preview match
+    the editor, and the active profile's enabled rules reach xray on connect and
+    reconnect only — a running core is never rewritten in place. A `direct` rule
+    bypasses the proxy and a `block` rule drops traffic. `geosite:` / `geoip:`
+    entries resolve from the bundled `geoip.dat` and `geosite.dat` (no silent
+    fallback when assets are missing). Rule edits are local to SQLite and survive
+    a restart; no drag-and-drop, import/export, port/protocol/network/process
+    fields, or DNS rules are present.
 
 ## Not covered by this checklist
 
