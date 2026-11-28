@@ -17,7 +17,7 @@ use tokio::time::MissedTickBehavior;
 use crate::anti_dpi::AntiDpiStatus;
 use crate::core::job::JobHandle;
 use crate::core::snapshot::ConfigSnapshot;
-use crate::core::supervisor::{binary_path, ChildGuard, SupervisorError};
+use crate::core::supervisor::{binary_path_with_resource_dir, ChildGuard, SupervisorError};
 use crate::platform::proxy::{load_previous, PreviousProxy, ProxyBackend};
 use crate::platform::proxy_windows::WindowsProxy;
 use crate::platform::vpn::{NoopVpnBackend, VpnBackend};
@@ -185,16 +185,44 @@ impl CoreHandle for XrayCoreHandle {
 /// shared job owns every connection core started through this launcher.
 pub struct XrayLauncher {
     job: Arc<JobHandle>,
+    /// App-writable binaries dir. On Android this is the real app files/cache
+    /// dir populated from APK assets; desktop passes `None` and keeps the
+    /// existing `binary_path(None)` order.
+    binaries_dir: Option<PathBuf>,
+}
+
+impl XrayLauncher {
+    pub fn new(job: Arc<JobHandle>, binaries_dir: Option<PathBuf>) -> Self {
+        Self { job, binaries_dir }
+    }
+
+    fn resolved_binary(&self) -> PathBuf {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf));
+        let env_path = std::env::var_os(crate::core::supervisor::BINARY_PATH_ENV);
+        binary_path_with_resource_dir(
+            exe_dir.as_deref(),
+            None,
+            env_path.as_deref(),
+            self.binaries_dir.as_deref(),
+        )
+    }
 }
 
 impl CoreLauncher for XrayLauncher {
     fn launch(&self, snapshot: &ConfigSnapshot) -> std::result::Result<Box<dyn CoreHandle>, String> {
-        if !binary_path(None).exists() {
+        if !self.resolved_binary().exists() {
             return Err("core binary unavailable".to_string());
         }
-        ChildGuard::spawn(snapshot, Some(&self.job))
-            .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
-            .map_err(|_| "failed to start core".to_string())
+        crate::core::supervisor::spawn_with_dir(
+            snapshot,
+            Some(&self.job),
+            None,
+            self.binaries_dir.as_deref(),
+        )
+        .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
+        .map_err(|_| "failed to start core".to_string())
     }
 
     fn launch_with_tun(
@@ -202,13 +230,18 @@ impl CoreLauncher for XrayLauncher {
         snapshot: &ConfigSnapshot,
         tun_fd: i32,
     ) -> std::result::Result<Box<dyn CoreHandle>, String> {
-        if !binary_path(None).exists() {
+        if !self.resolved_binary().exists() {
             crate::core::supervisor::close_tun_fd(tun_fd);
             return Err("core binary unavailable".to_string());
         }
-        crate::core::supervisor::spawn_with(snapshot, Some(&self.job), Some(tun_fd))
-            .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
-            .map_err(|_| "failed to start core".to_string())
+        crate::core::supervisor::spawn_with_dir(
+            snapshot,
+            Some(&self.job),
+            Some(tun_fd),
+            self.binaries_dir.as_deref(),
+        )
+        .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
+        .map_err(|_| "failed to start core".to_string())
     }
 }
 
@@ -233,9 +266,13 @@ struct AppStateInner {
     mutation_guard: MutationGuard,
     runtime: Mutex<RuntimeState>,
     config_dir: PathBuf,
-    /// Directory holding bundled geoip/geosite dat files. Sent to xray via
-    /// `XRAY_LOCATION_ASSET` in generated configs; `None` in tests.
+    /// Directory holding bundled geoip/geosite dat files (and, on Android, the
+    /// staged xray binaries). Sent to xray via `XRAY_LOCATION_ASSET`; `None`
+    /// in tests.
     asset_dir: Option<PathBuf>,
+    /// Base dir for probe config/PID sidecars. `None` keeps Windows on the
+    /// system temp dir; Android injects the app cache dir at bootstrap.
+    temp_dir: Option<PathBuf>,
     launcher: Box<dyn CoreLauncher>,
     job: Arc<JobHandle>,
     /// Platform VPN seam. Desktop uses `NoopVpnBackend`; Android installs the
@@ -325,6 +362,7 @@ impl AppState {
                 }),
                 config_dir,
                 asset_dir: None,
+                temp_dir: None,
                 launcher,
                 job,
                 vpn,
@@ -414,6 +452,7 @@ impl AppState {
 pub fn bootstrap(
     dir: &Path,
     asset_dir: Option<PathBuf>,
+    temp_dir: Option<PathBuf>,
     vpn: Box<dyn VpnBackend>,
 ) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;
@@ -435,19 +474,21 @@ pub fn bootstrap(
         conn,
         dir.to_path_buf(),
         proxy,
-        Box::new(XrayLauncher { job: job.clone() }),
+        Box::new(XrayLauncher::new(job.clone(), asset_dir.clone())),
         job,
         vpn,
         cfg!(target_os = "android"),
         Box::new(RealFdCloser),
     );
     // The production state is still uniquely owned here, so install the
-    // bundled asset directory without widening the public constructors.
-    // A clone before this point would silently drop geo assets, so fail loudly.
-    if let Some(dir) = asset_dir {
+    // bundled asset directory and the probe temp base without widening the
+    // public constructors. A clone before this point would silently drop geo
+    // assets or write probes into an unwritable system temp dir, so fail loudly.
+    if asset_dir.is_some() || temp_dir.is_some() {
         let inner = Arc::get_mut(&mut state.inner)
-            .expect("bootstrap state must be uniquely owned when installing asset_dir");
-        inner.asset_dir = Some(dir);
+            .expect("bootstrap state must be uniquely owned when installing asset_dir/temp_dir");
+        inner.asset_dir = asset_dir;
+        inner.temp_dir = temp_dir;
     }
     Ok(state)
 }

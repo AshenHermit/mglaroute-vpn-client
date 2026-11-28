@@ -256,9 +256,15 @@ option) and produces a platform-specific inbound set from the same snapshot:
   `xray-x86_64-pc-windows-msvc.exe`. `armv7-linux-androideabi` and
   `i686-linux-android` are Rust compile-only targets in CI (`check-android`),
   not shipped Android binaries.
-- `core::supervisor::binary_path` must resolve the Android sidecar via
-  `resource_dir().join("binaries")` (Tauri extracts sidecars there on mobile),
-  not only `current_exe().parent()` / `CARGO_MANIFEST_DIR`.
+- On mobile Tauri `resources` are APK assets (`asset://localhost/`), not real
+  filesystem paths, and `externalBin` sidecars are not established as mobile
+  packaging. The Android overlay therefore bundles both xray binaries as
+  `bundle.resources`; the Kotlin plugin copies them (and the geo dat files)
+  from APK assets into the app files dir (also idempotently at plugin load, and
+  explicitly via a `stage_assets` plugin command before every Android connect)
+  and marks xray executable. `core::supervisor::binary_path` resolution must use that injected
+  app binaries dir, not only `current_exe().parent()` / `CARGO_MANIFEST_DIR`.
+  Desktop keeps the existing env → override → exe-dir → bundled order.
 - `geoip.dat` / `geosite.dat` come from the verified arm64 Android zip and are
   staged alongside the sidecars; they continue to be read from
   `resource_dir()/binaries`, and the build fails if missing. Anti-DPI assets are

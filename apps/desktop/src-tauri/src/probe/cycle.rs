@@ -91,6 +91,9 @@ pub struct ProbeSample {
 pub struct ProbeContext<'a> {
     pub cancel: &'a watch::Receiver<bool>,
     pub job: &'a JobHandle,
+    /// Probe config/PID base. `None` uses the system temp dir (Windows);
+    /// Android injects the app cache dir at bootstrap.
+    pub temp_dir: Option<&'a std::path::Path>,
 }
 
 pub type ProbeFutureOne<'a> = Pin<Box<dyn Future<Output = Result<Option<ProbeSample>>> + Send + 'a>>;
@@ -139,12 +142,14 @@ pub async fn probe_cycle_detached(
     transport: &dyn ProbeTransport,
     progress: &dyn ProbeProgress,
     cancel: watch::Receiver<bool>,
+    temp_dir: Option<&std::path::Path>,
 ) -> Result<Vec<ProbeSample>> {
     let total = profiles.len();
     let job = JobHandle::create()?;
     let ctx = ProbeContext {
         cancel: &cancel,
         job: &job,
+        temp_dir,
     };
     let limit = settings.test_concurrency.clamp(1, 20) as usize;
     let mut samples = Vec::with_capacity(total);
@@ -304,7 +309,7 @@ pub async fn run_probe_cycle_with(
     let services = service_profile_repo::list_enabled(conn)?;
     let (_tx, rx) = watch::channel(false);
     let samples =
-        probe_cycle_detached(&profiles, &services, settings, transport, progress, rx).await?;
+        probe_cycle_detached(&profiles, &services, settings, transport, progress, rx, None).await?;
     persist_probe_samples(
         conn,
         &samples,
@@ -467,7 +472,8 @@ async fn probe_core_once(
     let (listener, port) = reserve_port()?;
     let config = build_probe_config(profile, port)?;
 
-    let files = ProbeTempFiles::new()?;
+    let system_temp = std::env::temp_dir();
+    let files = ProbeTempFiles::new_in(ctx.temp_dir.unwrap_or(system_temp.as_path()))?;
     let config_json = serde_json::to_string(&config)?;
     if let Err(error) = std::fs::write(&files.config_path, config_json) {
         files.cleanup();
@@ -632,7 +638,11 @@ mod tests {
                 if *ctx.cancel.borrow() {
                     return Ok(None);
                 }
-                let files = ProbeTempFiles::new().expect("temp files");
+                let system_temp = std::env::temp_dir();
+                let files = ProbeTempFiles::new_in(
+                    ctx.temp_dir.unwrap_or(system_temp.as_path()),
+                )
+                .expect("temp files");
                 std::fs::write(&files.config_path, "{}").expect("write config");
                 files.write_pid(4242).expect("write pid");
                 self.started
@@ -830,6 +840,7 @@ mod tests {
             &transport,
             &SilentProgress,
             rx,
+            None,
         )
         .await
         .expect("probe cycle");
@@ -881,6 +892,7 @@ mod tests {
             &FailingTransport,
             &progress,
             rx,
+            None,
         )
         .await
         .expect("a failing profile must not abort the cycle");
@@ -931,6 +943,7 @@ mod tests {
             &transport,
             &progress,
             rx,
+            None,
         )
         .await
         .expect("probe cycle");
@@ -1009,6 +1022,7 @@ mod tests {
             &CountingTransport::new(),
             &progress,
             rx,
+            None,
         )
         .await
         .expect("probe cycle");

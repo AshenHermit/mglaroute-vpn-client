@@ -125,11 +125,25 @@ pub fn run() {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             // Startup restore happens before either scheduler loop is spawned.
             // No auto-connect: proxy state is restored, the operator connects.
+            #[cfg(desktop)]
             let asset_dir = app
                 .path()
                 .resource_dir()
                 .ok()
                 .map(|path| path.join("binaries"));
+            // On mobile Tauri `resources` live in the APK as `asset://...`
+            // virtual paths, not a filesystem resource dir. The Kotlin plugin
+            // stages them into `filesDir/binaries` in load(); the launcher and
+            // XRAY_LOCATION_ASSET must both use that real directory.
+            #[cfg(mobile)]
+            let asset_dir = Some(dir.join("binaries"));
+            // Android probes must write configs/PID sidecars into the app cache
+            // dir; the system temp dir is not app-writable there. Windows keeps
+            // its existing system-temp behaviour (None).
+            #[cfg(mobile)]
+            let temp_dir = app.path().cache_dir().ok();
+            #[cfg(not(mobile))]
+            let temp_dir = None;
             #[cfg(mobile)]
             let vpn: Box<dyn platform::vpn::VpnBackend> = {
                 let managed = app
@@ -139,7 +153,7 @@ pub fn run() {
             };
             #[cfg(not(mobile))]
             let vpn: Box<dyn platform::vpn::VpnBackend> = Box::new(platform::vpn::NoopVpnBackend);
-            let state = commands::bootstrap(&dir, asset_dir, vpn)?;
+            let state = commands::bootstrap(&dir, asset_dir, temp_dir, vpn)?;
             trace_startup_phase(started, "bootstrap");
             app.manage(state.clone());
 
@@ -215,11 +229,13 @@ mod tests {
                 .and_then(|resources| resources.as_array()),
             Some(
                 &vec![
+                    serde_json::Value::String("binaries/xray-aarch64-linux-android".into()),
+                    serde_json::Value::String("binaries/xray-x86_64-linux-android".into()),
                     serde_json::Value::String("binaries/geoip.dat".into()),
                     serde_json::Value::String("binaries/geosite.dat".into()),
                 ]
             ),
-            "Android bundle resources must contain geo dat files only"
+            "Android bundle resources must contain only the two xray sidecars and geo dat files"
         );
         assert_eq!(
             value

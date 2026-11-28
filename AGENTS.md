@@ -163,6 +163,17 @@ docs/superpowers/specs/   design docs
 
 ## Contracts
 
+- Android asset + probe paths: Tauri mobile `resources` are APK assets, not
+  filesystem paths. `tauri.android.conf.json` bundles the two ABI-named xray
+  binaries plus geo dat files; Kotlin `MglarouteVpnPlugin.load()` copies them
+  from `assets/` to its files dir and marks xray executable; Rust calls
+  `stage_assets` before each Android connect with the same app-data binaries
+  dir. `XrayLauncher` resolves xray and sets `XRAY_LOCATION_ASSET` from that same
+  injected app binaries dir — never `current_exe().parent()`. Probe config/PID
+  sidecars use the app cache dir injected at bootstrap; Windows keeps system
+  temp. Kotlin stops any foreground VPN session on every post-establish or
+  early `start` failure, and the service returns `START_NOT_STICKY` so a
+  process death cannot resurrect a notification with no TUN fd.
 - Desktop tray lifecycle: `CloseRequested` hides the window (process stays
   alive); tray left-click / `Open` shows and focuses `main`; tray `Exit` runs
   `disconnect_impl` then `app.exit(0)` behind an idempotent shutdown gate.

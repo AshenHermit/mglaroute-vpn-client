@@ -57,11 +57,17 @@ pub fn binary_name_for(resource_dir: Option<&Path>) -> String {
     #[cfg(not(target_os = "android"))]
     {
         let _ = resource_dir;
-        if cfg!(windows) {
-            "xray.exe".to_string()
-        } else {
-            "xray".to_string()
-        }
+        default_binary_name()
+    }
+}
+
+/// Default (non-Android) sidecar name. Shared with the pure resolver so the
+/// desktop order stays byte-for-byte unchanged.
+fn default_binary_name() -> String {
+    if cfg!(windows) {
+        "xray.exe".to_string()
+    } else {
+        "xray".to_string()
     }
 }
 
@@ -77,7 +83,9 @@ pub(crate) fn android_binary_name(arch: &str) -> String {
 }
 
 /// Candidate path for an Android sidecar under a Tauri resource directory.
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+/// Kept for the resolution contract test; production uses the injected real
+/// binaries dir directly, so both desktop and Android targets allow dead code.
+#[allow(dead_code)]
 pub(crate) fn android_binary_candidate(resource_dir: &Path, arch: &str) -> Option<PathBuf> {
     Some(
         resource_dir
@@ -96,17 +104,34 @@ pub fn binary_path_with_resource_dir(
     resource_dir: Option<&Path>,
 ) -> PathBuf {
     #[cfg(target_os = "android")]
-    if let Some(dir) = resource_dir {
-        if let Some(candidate) = android_binary_candidate(dir, env::consts::ARCH) {
-            if candidate.exists() {
-                return candidate;
-            }
+    let arch = Some(env::consts::ARCH);
+    #[cfg(not(target_os = "android"))]
+    let arch = None;
+    resolve_binary_in(exe_dir, override_path, env_path, resource_dir, arch)
+}
+
+/// Pure resolver. `binaries_dir` is the app-writable directory holding the
+/// staged xray binaries (on Android: the real app files/cache binaries dir
+/// populated from APK assets by the Kotlin plugin). `android_arch = Some(_)`
+/// makes the Android ABI-named candidate win, independently of the host OS so
+/// the resolution contract is unit-testable on a desktop machine. Desktop
+/// order is unchanged: env → override → exe-dir sidecar → bundled path.
+pub(crate) fn resolve_binary_in(
+    exe_dir: Option<&Path>,
+    override_path: Option<&str>,
+    env_path: Option<&OsStr>,
+    binaries_dir: Option<&Path>,
+    android_arch: Option<&str>,
+) -> PathBuf {
+    if let (Some(arch), Some(dir)) = (android_arch, binaries_dir) {
+        let candidate = dir.join(android_binary_name(arch));
+        if candidate.exists() {
+            return candidate;
         }
     }
-    #[cfg(not(target_os = "android"))]
-    let _ = resource_dir;
-
-    let name = binary_name_for(resource_dir);
+    let name = android_arch
+        .map(android_binary_name)
+        .unwrap_or_else(default_binary_name);
     if let Some(value) = env_path.filter(|value| !value.is_empty()) {
         return PathBuf::from(value);
     }
@@ -187,6 +212,17 @@ impl CommandEnv {
 /// reaches a log sink. Only Android callers pass `tun_fd`, so desktop commands
 /// never carry `XRAY_TUN_FD`.
 pub fn build_command_with(snapshot: &ConfigSnapshot, tun_fd: Option<i32>) -> Result<Command> {
+    build_command_with_dir(snapshot, tun_fd, None)
+}
+
+/// Same as [`build_command_with`] but resolves xray from `binaries_dir` when
+/// supplied. Android callers pass the app files/cache binaries dir populated
+/// from APK assets; desktop callers pass `None` and keep the existing order.
+pub fn build_command_with_dir(
+    snapshot: &ConfigSnapshot,
+    tun_fd: Option<i32>,
+    binaries_dir: Option<&Path>,
+) -> Result<Command> {
     let exe_dir = env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -195,7 +231,7 @@ pub fn build_command_with(snapshot: &ConfigSnapshot, tun_fd: Option<i32>) -> Res
         exe_dir.as_deref(),
         None,
         env_path.as_deref(),
-        exe_dir.as_deref(),
+        binaries_dir,
     );
     let mut command = Command::new(program);
     command.arg("run").arg("-c").arg(&snapshot.config_path);
@@ -329,7 +365,17 @@ pub fn spawn_with(
     job: Option<&JobHandle>,
     tun_fd: Option<i32>,
 ) -> Result<ChildGuard> {
-    let mut command = match build_command_with(snapshot, tun_fd) {
+    spawn_with_dir(snapshot, job, tun_fd, None)
+}
+
+/// [`spawn_with`] with an explicit app binaries dir for Android resolution.
+pub fn spawn_with_dir(
+    snapshot: &ConfigSnapshot,
+    job: Option<&JobHandle>,
+    tun_fd: Option<i32>,
+    binaries_dir: Option<&Path>,
+) -> Result<ChildGuard> {
+    let mut command = match build_command_with_dir(snapshot, tun_fd, binaries_dir) {
         Ok(command) => command,
         Err(error) => {
             if let Some(fd) = tun_fd {
@@ -789,6 +835,35 @@ mod tests {
         assert_eq!(
             android_binary_candidate(resource, "aarch64"),
             Some(resource.join("binaries").join("xray-aarch64-linux-android"))
+        );
+    }
+
+    /// Final-review Critical 1: an installed APK must resolve xray from the
+    /// injected app binaries dir, never from `current_exe().parent()` (which on
+    /// Android is not an app-writable directory holding the staged sidecar).
+    #[test]
+    fn android_binary_resolves_from_injected_app_binaries_dir_not_exe_dir() {
+        let app_binaries = tempfile::tempdir().expect("app binaries tempdir");
+        let staged = app_binaries
+            .path()
+            .join("xray-aarch64-linux-android");
+        std::fs::write(&staged, b"staged xray").expect("write staged sidecar");
+
+        let exe_dir = tempfile::tempdir().expect("exe dir tempdir");
+        std::fs::write(exe_dir.path().join("xray"), b"wrong xray").expect("write decoy");
+
+        let resolved = resolve_binary_in(
+            Some(exe_dir.path()),
+            None,
+            None,
+            Some(app_binaries.path()),
+            Some("aarch64"),
+        );
+        assert_eq!(resolved, staged, "must use injected app binaries dir");
+        assert!(
+            !resolved.starts_with(exe_dir.path()),
+            "must not fall back to current_exe().parent(): {}",
+            resolved.display()
         );
     }
 }
