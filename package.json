@@ -1,6 +1,6 @@
 {
   "name": "mglaroute-vpn-client",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "packageManager": "pnpm@9",
   "engines": {
