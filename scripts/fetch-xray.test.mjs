@@ -96,6 +96,30 @@ describe("geo assets", () => {
     }
   });
 
+  it("stageGeoAssets stages official-shaped zip without published sidecars", () => {
+    // Official Xray release zips ship geoip.dat/geosite.dat but no per-file .sha256.
+    // The zip-level .dgst is verified before extraction; sidecars are written locally
+    // so verifyBinaries can detect later tampering of the staged files.
+    const zip = new AdmZip();
+    for (const name of GEO_ASSETS) zip.addFile(name, Buffer.from(`${name}-payload`));
+    const ctx = fixture({ geoAssets: [] });
+    try {
+      expect(() => stageGeoAssets(zip, ctx.dir)).not.toThrow();
+      for (const name of GEO_ASSETS) {
+        expect(existsSync(join(ctx.dir, name))).toBe(true);
+        expect(existsSync(join(ctx.dir, `${name}.sha256`))).toBe(true);
+      }
+      const io = captureConsole();
+      try {
+        expect(() => verifyBinaries({ ...TEST_ENV, binDir: ctx.dir })).not.toThrow();
+      } finally {
+        io.restore();
+      }
+    } finally {
+      rmSync(ctx.dir, { recursive: true, force: true });
+    }
+  });
+
   it("verifyBinaries fails when a geo asset is missing", () => {
     const ctx = fixture({ geoAssets: ["geoip.dat"] }); // geosite.dat absent
     const io = captureConsole();
@@ -117,19 +141,6 @@ describe("geo assets", () => {
       expect(() => stageGeoAssets(zip, ctx.dir)).toThrow(/sha256 mismatch/i);
       expect(existsSync(join(ctx.dir, "geoip.dat"))).toBe(false);
       expect(existsSync(join(ctx.dir, "geoip.dat.sha256"))).toBe(false);
-    } finally {
-      rmSync(ctx.dir, { recursive: true, force: true });
-    }
-  });
-
-  it("stageGeoAssets rejects a geo asset with no published sidecar", () => {
-    const { zip } = zipFixture();
-    zip.deleteFile("geosite.dat.sha256");
-    const ctx = fixture({ geoAssets: [] });
-    try {
-      expect(() => stageGeoAssets(zip, ctx.dir)).toThrow(/geosite\.dat\.sha256/i);
-      expect(existsSync(join(ctx.dir, "geoip.dat"))).toBe(false); // validate all before writing any
-      expect(existsSync(join(ctx.dir, "geosite.dat"))).toBe(false);
     } finally {
       rmSync(ctx.dir, { recursive: true, force: true });
     }

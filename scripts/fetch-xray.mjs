@@ -41,14 +41,17 @@ export function extractZipEntry(zip, name) {
   return entry.getData();
 }
 
-// Stage geo assets only when the zip's published sidecar matches the extracted
-// bytes. Computing the digest from the bytes alone would bless corrupted data.
+// Official Xray zips ship geoip.dat/geosite.dat without per-file .sha256 files.
+// The zip-level .dgst is verified before extraction, so the extracted bytes are
+// already upstream-authenticated. If a published per-file sidecar is present,
+// validate it too; otherwise derive the local sidecar from the extracted bytes
+// so verifyBinaries can detect later tampering of the staged files.
 export function stageGeoAssets(zip, binDir) {
   const staged = [];
   for (const name of GEO_ASSETS) {
     const data = extractZipEntry(zip, name);
-    const digestText = extractZipEntry(zip, `${name}.sha256`).toString("utf8");
-    if (!verifyBufferSha256(data, digestText)) {
+    const sidecarEntry = findZipEntry(zip, `${name}.sha256`);
+    if (sidecarEntry && !verifyBufferSha256(data, sidecarEntry.getData().toString("utf8"))) {
       throw new Error(`sha256 mismatch for ${name} in downloaded archive`);
     }
     staged.push({ name, data, digest: sha256Hex(data) });
