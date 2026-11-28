@@ -202,6 +202,23 @@ pub fn build_command_with(snapshot: &ConfigSnapshot, tun_fd: Option<i32>) -> Res
     command.stdout(Stdio::null()).stderr(Stdio::null());
     if let Some(fd) = tun_fd {
         CommandEnv::with_tun_fd(fd).apply(&mut command);
+        // Android detaches the TUN fd in the VpnService and Rust inherits it.
+        // Rust fds are CLOEXEC by default, so the child would lose the fd at
+        // exec: clear the flag in the post-fork pre_exec hook. Only fcntl is
+        // called here (async-signal-safe); no allocation or logging.
+        #[cfg(target_os = "android")]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+        }
     }
     apply_hidden_console(&mut command);
     Ok(command)

@@ -1,6 +1,8 @@
-//! Mobile VPN backend seam. The concrete Android `VpnService` implementation
-//! lives in a later mobile plugin; this module only defines the contract and
-//! desktop/test doubles. No OS state is touched here.
+//! Mobile VPN backend seam. The Android `VpnService` plugin adapts the Kotlin
+//! side to this contract; desktop keeps the no-op/test doubles. No OS state is
+//! touched here.
+
+pub mod mobile;
 
 /// Parameters for one `VpnService` session, derived from the shared config
 /// snapshot. Addresses and routes are CIDR strings; DNS is a plain address;

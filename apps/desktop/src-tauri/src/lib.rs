@@ -92,7 +92,29 @@ pub fn run() {
     let handle = runtime.handle().clone();
     trace_startup_phase(started, "runtime-ready");
 
-    tauri::Builder::default()
+    #[cfg(mobile)]
+    let vpn_plugin = tauri::plugin::Builder::new(platform::vpn::mobile::VPN_PLUGIN_NAME)
+        .setup(|app, api| {
+            #[cfg(target_os = "android")]
+            {
+                let plugin_handle = api.register_android_plugin(
+                    platform::vpn::mobile::VPN_PLUGIN_PACKAGE,
+                    platform::vpn::mobile::VPN_PLUGIN_CLASS,
+                )?;
+                app.manage(platform::vpn::mobile::MglarouteVpnBackend::new(
+                    plugin_handle,
+                ));
+            }
+            Ok(())
+        })
+        .build();
+
+    #[cfg(mobile)]
+    let builder = tauri::Builder::default().plugin(vpn_plugin);
+    #[cfg(not(mobile))]
+    let builder = tauri::Builder::default();
+
+    builder
         .on_window_event(lifecycle::hide_on_close)
         .setup(move |app| {
             let dir = app
