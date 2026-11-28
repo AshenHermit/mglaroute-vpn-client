@@ -60,16 +60,15 @@ class MglarouteVpnService : VpnService() {
         val builder = Builder()
             .setSession(SESSION_NAME)
             .setBlocking(true)
-        if (args.address.isBlank()) {
-            builder.addAddress("10.10.0.1/30")
-            builder.addDnsServer("10.10.0.2")
-        } else {
-            builder.addAddress(args.address)
-            builder.addDnsServer(args.dns)
-        }
+        val (addressHost, addressPrefix) = splitCidr(
+            if (args.address.isBlank()) "10.10.0.1/30" else args.address,
+        )
+        builder.addAddress(addressHost, addressPrefix)
+        builder.addDnsServer(if (args.dns.isBlank()) "10.10.0.2" else args.dns)
         val routes = if (args.routes.isEmpty()) listOf("0.0.0.0/0") else args.routes
         for (route in routes) {
-            builder.addRoute(route.removePrefix("ip:"))
+            val (routeHost, routePrefix) = splitCidr(route.removePrefix("ip:"))
+            builder.addRoute(routeHost, routePrefix)
         }
         // Exclude the app itself so VPN traffic cannot loop back into the core.
         builder.addDisallowedApplication(packageName)
@@ -103,6 +102,13 @@ class MglarouteVpnService : VpnService() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
+    private fun splitCidr(value: String): Pair<String, Int> {
+        val host = value.substringBefore('/')
+        val prefix = value.substringAfter('/').toIntOrNull()
+            ?: if (host.contains(':')) 128 else 32
+        return host to prefix
+    }
+
     private fun notification(): Notification {
         val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
@@ -112,7 +118,7 @@ class MglarouteVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_vpn_ic)
+            .setSmallIcon(R.drawable.ic_stat_vpn)
             .setContentTitle("mglaroute VPN")
             .setOngoing(true)
             .setContentIntent(pendingIntent)

@@ -223,10 +223,16 @@ mod tests {
             "detachFd()",
             "startForeground",
             "establish()",
-            "addAddress(\"10.10.0.1/30\")",
-            "addDnsServer(\"10.10.0.2\")",
+            "builder.addAddress(addressHost, addressPrefix)",
+            "builder.addRoute(routeHost, routePrefix)",
+            "\"10.10.0.1/30\"",
+            "\"10.10.0.2\"",
+            "addDnsServer(",
             "setBlocking(true)",
             "addDisallowedApplication",
+            "androidx.activity.result.contract.ActivityResultContracts",
+            "ParcelFileDescriptor.adoptFd(fd).close()",
+            "R.drawable.ic_stat_vpn",
         ] {
             assert!(both.contains(required), "Kotlin sources missing {required}");
         }

@@ -14,8 +14,8 @@ import android.os.IBinder
 import android.webkit.WebView
 import java.io.File
 import java.io.FileOutputStream
-import androidx.activity.ActivityResultContracts
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -242,7 +242,7 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
         if (name == null) {
             // No handoff happened, so this descriptor is still ours to close.
             try {
-                android.system.Os.close(fd)
+                android.os.ParcelFileDescriptor.adoptFd(fd).close()
             } catch (_: Exception) {
                 // Closing is best effort; teardown must still happen.
             }
