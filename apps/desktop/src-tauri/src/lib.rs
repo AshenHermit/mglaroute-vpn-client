@@ -12,7 +12,9 @@ pub mod storage;
 pub mod subscription;
 pub mod update;
 
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
+#[cfg(desktop)]
+use std::time::SystemTime;
 
 use tauri::Manager;
 
@@ -78,8 +80,10 @@ fn trace_startup_phase(started: Instant, phase: &'static str) {
     }
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let started = Instant::now();
+    #[cfg(desktop)]
     let cutoff = SystemTime::now();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -106,12 +110,15 @@ pub fn run() {
             trace_startup_phase(started, "bootstrap");
             app.manage(state.clone());
 
-            // Stale sidecars predate this launch; anything written after the
-            // cutoff belongs to a probe started by the now-responsive UI.
-            let temp_dir = std::env::temp_dir();
-            handle.spawn_blocking(move || {
-                let _ = crate::core::job::reap_orphans(&temp_dir, Some(cutoff));
-            });
+            #[cfg(desktop)]
+            {
+                // Stale sidecars predate this launch; anything written after the
+                // cutoff belongs to a probe started by the now-responsive UI.
+                let temp_dir = std::env::temp_dir();
+                handle.spawn_blocking(move || {
+                    let _ = crate::core::job::reap_orphans(&temp_dir, Some(cutoff));
+                });
+            }
 
             state::install_tauri_sink(app.handle().clone());
             handle.spawn(commands::refetch_loop(state.clone()));
@@ -124,7 +131,10 @@ pub fn run() {
                 app.handle().plugin(tauri_plugin_shell::init())?;
             }
             trace_startup_phase(started, "plugins");
-            lifecycle::setup_tray(app)?;
+            #[cfg(desktop)]
+            {
+                lifecycle::setup_tray(app)?;
+            }
             trace_startup_phase(started, "tray");
             trace_startup_phase(started, "setup-done");
             Ok(())
@@ -144,6 +154,66 @@ mod tests {
         assert!(line.starts_with("startup bootstrap "), "{line}");
         assert!(line.ends_with("ms"), "{line}");
         assert!(!line.contains('/'), "{line}");
+    }
+
+    #[test]
+    fn android_config_overlay_removes_desktop_only_bundles() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tauri.android.conf.json"
+        );
+        let text = std::fs::read_to_string(path)
+            .expect("src-tauri/tauri.android.conf.json must exist");
+        let value: serde_json::Value =
+            serde_json::from_str(&text).expect("valid Android overlay JSON");
+        // RFC 7396 merge patch: null means "delete this member" once the
+        // overlay is applied to tauri.conf.json.
+        assert!(
+            value
+                .get("plugins")
+                .and_then(|plugins| plugins.get("updater"))
+                .is_none_or(serde_json::Value::is_null),
+            "Android overlay must remove plugins.updater"
+        );
+        assert_eq!(
+            value
+                .get("bundle")
+                .and_then(|bundle| bundle.get("resources"))
+                .and_then(|resources| resources.as_array()),
+            Some(
+                &vec![
+                    serde_json::Value::String("binaries/geoip.dat".into()),
+                    serde_json::Value::String("binaries/geosite.dat".into()),
+                ]
+            ),
+            "Android bundle resources must contain geo dat files only"
+        );
+        assert_eq!(
+            value
+                .get("bundle")
+                .and_then(|bundle| bundle.get("createUpdaterArtifacts"))
+                .and_then(|flag| flag.as_bool()),
+            Some(false),
+            "Android must not create updater artifacts"
+        );
+        assert_eq!(
+            value
+                .get("bundle")
+                .and_then(|bundle| bundle.get("android"))
+                .and_then(|android| android.get("minSdkVersion"))
+                .and_then(|sdk| sdk.as_u64()),
+            Some(26),
+            "Android minSdkVersion must be 26"
+        );
+        assert_eq!(
+            value
+                .get("bundle")
+                .and_then(|bundle| bundle.get("android"))
+                .and_then(|android| android.get("versionCode"))
+                .and_then(|code| code.as_u64()),
+            Some(2003),
+            "Android versionCode must be 2003"
+        );
     }
 
     #[test]
