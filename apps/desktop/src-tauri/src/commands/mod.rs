@@ -85,6 +85,10 @@ pub enum CommandError {
     UpdateBusy,
     #[error("update failure")]
     Update,
+    #[error("vpn permission required")]
+    VpnPermissionRequired,
+    #[error("vpn interface unavailable")]
+    VpnInterfaceUnavailable,
 }
 
 impl From<rusqlite::Error> for CommandError {
@@ -788,6 +792,28 @@ mod tests {
             .expect("insert service result");
         }
         conn
+    }
+
+    #[test]
+    fn vpn_command_errors_are_generic_and_snake_case() {
+        assert_eq!(
+            serde_json::to_value(CommandError::VpnPermissionRequired)
+                .expect("serialize permission error"),
+            json!("vpn_permission_required")
+        );
+        assert_eq!(
+            serde_json::to_value(CommandError::VpnInterfaceUnavailable)
+                .expect("serialize interface error"),
+            json!("vpn_interface_unavailable")
+        );
+        assert_eq!(
+            CommandError::VpnPermissionRequired.to_string(),
+            "vpn permission required"
+        );
+        assert_eq!(
+            CommandError::VpnInterfaceUnavailable.to_string(),
+            "vpn interface unavailable"
+        );
     }
 
     #[test]
