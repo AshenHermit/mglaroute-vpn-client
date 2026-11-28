@@ -25,7 +25,7 @@ pub struct VpnSession {
 
 /// Backend failures. Raw text from a concrete backend is deliberately not
 /// carried: the command layer maps every variant to a generic command error.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum VpnError {
     #[error("vpn permission required")]
     PermissionRequired,
@@ -47,8 +47,22 @@ pub trait VpnBackend: Send + Sync {
     fn stop(&self) -> Result<(), VpnError>;
     /// Physical (non-VPN) interface name, used for route setup in a plugin.
     fn physical_interface(&self) -> Result<String, VpnError>;
+    /// Physical-network DNS servers as IP literals. Must not be the virtual
+    /// address handed to `VpnService`, or xray's dns outbound would loop.
+    fn dns_upstreams(&self) -> Result<Vec<String>, VpnError>;
     /// Block until the `VpnService` interface is up, or report failure.
     fn wait_established(&self) -> bool;
+}
+
+/// Generic mapping from a VPN backend failure to the command surface. Kept
+/// here so both desktop and mobile targets compile the same connection code.
+pub fn map_vpn_error(error: VpnError) -> crate::commands::CommandError {
+    use crate::commands::CommandError;
+    match error {
+        VpnError::PermissionRequired => CommandError::VpnPermissionRequired,
+        VpnError::InterfaceUnavailable => CommandError::VpnInterfaceUnavailable,
+        VpnError::StartFailed | VpnError::StopFailed => CommandError::Core,
+    }
 }
 
 /// Desktop default: no VPN interface exists. Keeps the seam usable without a
@@ -73,20 +87,54 @@ impl VpnBackend for NoopVpnBackend {
         Err(VpnError::InterfaceUnavailable)
     }
 
+    fn dns_upstreams(&self) -> Result<Vec<String>, VpnError> {
+        Ok(Vec::new())
+    }
+
     fn wait_established(&self) -> bool {
         false
     }
 }
 
 /// Test double with observable call order, intentionally public at module scope
-/// so command tests can inject it without a separate crate.
-#[derive(Debug, Default, Clone)]
+/// so command tests can inject it without a separate crate. Defaults describe
+/// a healthy Android session; tests override individual fields to inject
+/// failures.
+#[derive(Clone)]
 pub struct FakeVpnBackend {
     pub calls: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+    pub prepare_granted: bool,
+    pub interface_name: Option<String>,
+    pub session_fd: i32,
+    pub established: bool,
+    pub established_calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    pub dns_upstreams: Vec<String>,
+    pub dns_error: Option<VpnError>,
+    pub start_error: Option<VpnError>,
+    /// Observes `stop()` from command tests without leaking into production.
+    pub stop_hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl Default for FakeVpnBackend {
+    fn default() -> Self {
+        Self {
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            prepare_granted: true,
+            interface_name: Some("wlan0".to_string()),
+            session_fd: 42,
+            established: true,
+            established_calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            dns_upstreams: vec!["1.1.1.1".to_string()],
+            dns_error: None,
+            start_error: None,
+            stop_hook: None,
+        }
+    }
 }
 
 impl FakeVpnBackend {
-    /// Recorded backend calls in order (`prepare`, `start`, `stop`).
+    /// Recorded backend calls in order (`prepare`, `physical_interface`,
+    /// `dns_upstreams`, `start`, `stop`).
     pub fn calls(&self) -> Vec<&'static str> {
         self.calls
             .lock()
@@ -105,34 +153,54 @@ impl FakeVpnBackend {
 impl VpnBackend for FakeVpnBackend {
     fn prepare(&self) -> Result<bool, VpnError> {
         self.record("prepare");
-        Ok(true)
+        Ok(self.prepare_granted)
     }
 
     fn start(&self, _req: VpnStartRequest) -> Result<VpnSession, VpnError> {
         self.record("start");
+        if let Some(error) = &self.start_error {
+            return Err(error.clone());
+        }
         Ok(VpnSession {
-            fd: 42,
+            fd: self.session_fd,
             interface_name: "wlan0".to_string(),
         })
     }
 
     fn stop(&self) -> Result<(), VpnError> {
         self.record("stop");
+        if let Some(hook) = &self.stop_hook {
+            hook();
+        }
         Ok(())
     }
 
     fn physical_interface(&self) -> Result<String, VpnError> {
-        Ok("wlan0".to_string())
+        self.record("physical_interface");
+        self.interface_name
+            .clone()
+            .ok_or(VpnError::InterfaceUnavailable)
+    }
+
+    fn dns_upstreams(&self) -> Result<Vec<String>, VpnError> {
+        self.record("dns_upstreams");
+        if let Some(error) = &self.dns_error {
+            return Err(error.clone());
+        }
+        Ok(self.dns_upstreams.clone())
     }
 
     fn wait_established(&self) -> bool {
-        true
+        self.established_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.established
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{NoopVpnBackend, VpnBackend, VpnError, VpnStartRequest};
+    use super::{map_vpn_error, NoopVpnBackend, VpnBackend, VpnError, VpnStartRequest};
+    use crate::commands::CommandError;
     use crate::platform::vpn::FakeVpnBackend;
 
     #[test]
@@ -173,6 +241,40 @@ mod tests {
             backend.physical_interface(),
             Err(VpnError::InterfaceUnavailable)
         ));
+        assert!(backend.dns_upstreams().expect("noop DNS").is_empty());
         assert!(!backend.wait_established());
+    }
+
+    #[test]
+    fn fake_backend_dns_upstreams_are_configurable() {
+        let mut backend = FakeVpnBackend::default();
+        assert_eq!(
+            backend.dns_upstreams().expect("default DNS"),
+            vec!["1.1.1.1".to_string()]
+        );
+        backend.dns_upstreams = vec!["8.8.8.8".to_string(), "1.0.0.1".to_string()];
+        assert_eq!(
+            backend.dns_upstreams().expect("configured DNS"),
+            vec!["8.8.8.8".to_string(), "1.0.0.1".to_string()]
+        );
+        backend.dns_error = Some(VpnError::InterfaceUnavailable);
+        assert_eq!(
+            backend.dns_upstreams().expect_err("injected DNS failure"),
+            VpnError::InterfaceUnavailable
+        );
+    }
+
+    #[test]
+    fn vpn_errors_map_to_generic_command_errors() {
+        assert_eq!(
+            map_vpn_error(VpnError::PermissionRequired),
+            CommandError::VpnPermissionRequired
+        );
+        assert_eq!(
+            map_vpn_error(VpnError::InterfaceUnavailable),
+            CommandError::VpnInterfaceUnavailable
+        );
+        assert_eq!(map_vpn_error(VpnError::StartFailed), CommandError::Core);
+        assert_eq!(map_vpn_error(VpnError::StopFailed), CommandError::Core);
     }
 }

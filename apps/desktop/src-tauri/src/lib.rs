@@ -129,7 +129,16 @@ pub fn run() {
                 .resource_dir()
                 .ok()
                 .map(|path| path.join("binaries"));
-            let state = commands::bootstrap(&dir, asset_dir)?;
+            #[cfg(mobile)]
+            let vpn: Box<dyn platform::vpn::VpnBackend> = {
+                let managed = app
+                    .try_state::<platform::vpn::mobile::MglarouteVpnBackend>()
+                    .expect("VPN plugin backend must be managed before app setup");
+                Box::new(managed.inner().clone())
+            };
+            #[cfg(not(mobile))]
+            let vpn: Box<dyn platform::vpn::VpnBackend> = Box::new(platform::vpn::NoopVpnBackend);
+            let state = commands::bootstrap(&dir, asset_dir, vpn)?;
             trace_startup_phase(started, "bootstrap");
             app.manage(state.clone());
 

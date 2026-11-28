@@ -20,6 +20,7 @@ use crate::core::snapshot::ConfigSnapshot;
 use crate::core::supervisor::{binary_path, ChildGuard, SupervisorError};
 use crate::platform::proxy::{load_previous, PreviousProxy, ProxyBackend};
 use crate::platform::proxy_windows::WindowsProxy;
+use crate::platform::vpn::{NoopVpnBackend, VpnBackend};
 use crate::probe::scheduler::should_refetch;
 use crate::service_profiles::ensure_defaults_on_empty;
 use crate::state::{emit, MutationGuard, MutationPermit};
@@ -135,6 +136,33 @@ pub trait CoreHandle: Send {
 
 pub trait CoreLauncher: Send + Sync {
     fn launch(&self, snapshot: &ConfigSnapshot) -> std::result::Result<Box<dyn CoreHandle>, String>;
+
+    /// Android live-core launch. `spawn_with` consumes and closes the parent's
+    /// TUN fd on every path; the caller must therefore drop its own ownership
+    /// when it hands the fd here. Desktop launchers keep the default (fd
+    /// ignored) so the Windows path is unchanged.
+    fn launch_with_tun(
+        &self,
+        snapshot: &ConfigSnapshot,
+        _tun_fd: i32,
+    ) -> std::result::Result<Box<dyn CoreHandle>, String> {
+        self.launch(snapshot)
+    }
+}
+
+/// Parent-side close for a TUN fd that never reached a launcher (for example,
+/// a failed `start` follow-up or a shutdown with an unconsumed fd). The
+/// production implementation is a no-op on desktop; tests record the call.
+pub trait FdCloser: Send + Sync {
+    fn close(&self, fd: i32);
+}
+
+pub struct RealFdCloser;
+
+impl FdCloser for RealFdCloser {
+    fn close(&self, fd: i32) {
+        crate::core::supervisor::close_tun_fd(fd);
+    }
 }
 
 struct XrayCoreHandle(ChildGuard);
@@ -168,6 +196,20 @@ impl CoreLauncher for XrayLauncher {
             .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
             .map_err(|_| "failed to start core".to_string())
     }
+
+    fn launch_with_tun(
+        &self,
+        snapshot: &ConfigSnapshot,
+        tun_fd: i32,
+    ) -> std::result::Result<Box<dyn CoreHandle>, String> {
+        if !binary_path(None).exists() {
+            crate::core::supervisor::close_tun_fd(tun_fd);
+            return Err("core binary unavailable".to_string());
+        }
+        crate::core::supervisor::spawn_with(snapshot, Some(&self.job), Some(tun_fd))
+            .map(|child| Box::new(XrayCoreHandle(child)) as Box<dyn CoreHandle>)
+            .map_err(|_| "failed to start core".to_string())
+    }
 }
 
 struct RuntimeState {
@@ -177,6 +219,11 @@ struct RuntimeState {
     config_path: Option<PathBuf>,
     proxy: Box<dyn ProxyBackend + Send + Sync>,
     last_switch: Option<DateTime<Utc>>,
+    /// TUN fd owned by the connection slot until handed to the launcher. The
+    /// launcher consumes and closes it, so this is `None` for a live core.
+    tun_fd: Option<i32>,
+    /// True while a platform VPN session must be stopped on teardown.
+    vpn_active: bool,
 }
 
 struct AppStateInner {
@@ -191,6 +238,13 @@ struct AppStateInner {
     asset_dir: Option<PathBuf>,
     launcher: Box<dyn CoreLauncher>,
     job: Arc<JobHandle>,
+    /// Platform VPN seam. Desktop uses `NoopVpnBackend`; Android installs the
+    /// plugin-backed implementation at startup.
+    vpn: Box<dyn VpnBackend>,
+    /// Runtime platform branch. Tests on a desktop host set this to exercise
+    /// the Android lifecycle without a real VpnService.
+    android: bool,
+    fd_closer: Box<dyn FdCloser>,
     // Guarded by a std Mutex so `probe_cancel` can check "running" and send the
     // stop flag atomically with `start_probe`/`finish_probe`. A std lock is
     // required because the cancel command is sync (no await while held).
@@ -223,6 +277,32 @@ impl AppState {
         launcher: Box<dyn CoreLauncher>,
         job: Arc<JobHandle>,
     ) -> Self {
+        Self::new_with_vpn(
+            conn,
+            config_dir,
+            proxy,
+            launcher,
+            job,
+            Box::new(NoopVpnBackend),
+            cfg!(target_os = "android"),
+            Box::new(RealFdCloser),
+        )
+    }
+
+    /// Platform-aware constructor. `android` is a runtime flag so the Android
+    /// lifecycle can be exercised on a desktop host in unit tests; production
+    /// callers pass `cfg!(target_os = "android")`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_vpn(
+        conn: Connection,
+        config_dir: PathBuf,
+        proxy: Box<dyn ProxyBackend + Send + Sync>,
+        launcher: Box<dyn CoreLauncher>,
+        job: Arc<JobHandle>,
+        vpn: Box<dyn VpnBackend>,
+        android: bool,
+        fd_closer: Box<dyn FdCloser>,
+    ) -> Self {
         Self {
             inner: Arc::new(AppStateInner {
                 conn: Mutex::new(conn),
@@ -240,11 +320,16 @@ impl AppState {
                     config_path: None,
                     proxy,
                     last_switch: None,
+                    tun_fd: None,
+                    vpn_active: false,
                 }),
                 config_dir,
                 asset_dir: None,
                 launcher,
                 job,
+                vpn,
+                android,
+                fd_closer,
                 probe_running: std::sync::Mutex::new(false),
                 probe_cancel_tx: watch::Sender::new(false),
             }),
@@ -329,6 +414,7 @@ impl AppState {
 pub fn bootstrap(
     dir: &Path,
     asset_dir: Option<PathBuf>,
+    vpn: Box<dyn VpnBackend>,
 ) -> std::result::Result<AppState, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(dir)?;
     let mut conn = Connection::open(dir.join("client.db"))?;
@@ -345,12 +431,15 @@ pub fn bootstrap(
         proxy.restore(&previous)?;
     }
 
-    let mut state = AppState::new_with_job(
+    let mut state = AppState::new_with_vpn(
         conn,
         dir.to_path_buf(),
         proxy,
         Box::new(XrayLauncher { job: job.clone() }),
         job,
+        vpn,
+        cfg!(target_os = "android"),
+        Box::new(RealFdCloser),
     );
     // The production state is still uniquely owned here, so install the
     // bundled asset directory without widening the public constructors.
@@ -405,6 +494,28 @@ pub(crate) async fn handle_exited_child(
 
     // The process already exited; dropping the handle just frees the slot.
     drop(child);
+    if state.inner.android {
+        // No proxy to restore: VpnService owns the routes. The TUN fd was
+        // consumed by the launcher at connect, so only an unconsumed fd is
+        // closed here (never a second close of a live core's descriptor).
+        let fd = state.inner.runtime.lock().await.tun_fd.take();
+        if let Some(fd) = fd {
+            state.inner.fd_closer.close(fd);
+        }
+        if state.inner.runtime.lock().await.vpn_active {
+            let _ = state.inner.vpn.stop();
+        }
+        remove_config(&config_path);
+        let mut runtime = state.inner.runtime.lock().await;
+        runtime.vpn_active = false;
+        runtime.connection = ConnectionStatePayload {
+            status: ConnectionStatus::Faulted,
+            profile_id,
+            proxy_port: None,
+        };
+        emit_connection(&runtime.connection);
+        return Ok(true);
+    }
     let mut restore_ok = true;
     if let Some(previous) = previous {
         for _ in 0..2 {

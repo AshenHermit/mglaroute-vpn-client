@@ -12,19 +12,17 @@ use tauri::plugin::PluginHandle;
 use tauri::Wry;
 
 #[cfg(mobile)]
-use super::{VpnBackend, VpnError, VpnSession, VpnStartRequest};
-#[cfg(mobile)]
-use crate::commands::CommandError;
+use super::{map_vpn_error as map_to_command_error, VpnBackend, VpnError, VpnSession, VpnStartRequest};
 
 /// Tauri plugin identifier registered in `run()`. Kotlin class
 /// `MglarouteVpnPlugin` is loaded under this name; its commands are
-/// `prepare`, `start`, `stop`, `interface_name` and `wait_established`.
+/// `prepare`, `start`, `stop`, `interface_name`, `dns_servers` and `wait_established`.
 #[cfg(mobile)]
 pub const VPN_PLUGIN_NAME: &str = "mglaroute-vpn";
 /// Kotlin package of the generated Android project.
 #[cfg(mobile)]
 pub const VPN_PLUGIN_CLASS: &str = "MglarouteVpnPlugin";
-#[cfg(mobile)]
+/// Available on every target so the Android request builder compiles in tests.
 pub const VPN_PLUGIN_PACKAGE: &str = "com.mglaroute.client";
 /// Event emitted by the Kotlin plugin once the TUN interface is established.
 #[cfg(mobile)]
@@ -67,9 +65,17 @@ struct EstablishedResponse {
     established: bool,
 }
 
+#[cfg(mobile)]
+#[derive(Debug, Deserialize)]
+struct DnsResponse {
+    #[serde(rename = "dnsServers")]
+    dns_servers: Vec<String>,
+}
+
 /// Adapter from a Tauri mobile plugin handle to the platform VPN contract.
 /// The handle is the only state: sessions live in the Kotlin `VpnService`.
 #[cfg(mobile)]
+#[derive(Clone)]
 pub struct MglarouteVpnBackend(PluginHandle<Wry>);
 
 #[cfg(mobile)]
@@ -84,7 +90,9 @@ fn map_plugin_error(error: PluginInvokeError, fallback: VpnError) -> VpnError {
     if let PluginInvokeError::InvokeRejected(response) = &error {
         match response.code.as_deref() {
             Some("permission_required") => return VpnError::PermissionRequired,
-            Some("interface_unavailable") => return VpnError::InterfaceUnavailable,
+            Some("interface_unavailable") | Some("dns_unavailable") => {
+                return VpnError::InterfaceUnavailable
+            }
             _ => {}
         }
     }
@@ -93,15 +101,11 @@ fn map_plugin_error(error: PluginInvokeError, fallback: VpnError) -> VpnError {
 }
 
 /// Translate a backend failure for the command layer without exposing raw
-/// plugin text. Used by connection commands on mobile; desktop paths keep
-/// their existing error mapping.
+/// plugin text. Kept as a thin alias; the shared mapping lives in the parent
+/// module so desktop and mobile compile the same connection code.
 #[cfg(mobile)]
-pub fn map_vpn_error(error: VpnError) -> CommandError {
-    match error {
-        VpnError::PermissionRequired => CommandError::VpnPermissionRequired,
-        VpnError::InterfaceUnavailable => CommandError::VpnInterfaceUnavailable,
-        VpnError::StartFailed | VpnError::StopFailed => CommandError::Core,
-    }
+pub fn map_vpn_error(error: VpnError) -> crate::commands::CommandError {
+    map_to_command_error(error)
 }
 
 #[cfg(mobile)]
@@ -143,6 +147,14 @@ impl VpnBackend for MglarouteVpnBackend {
             .run_mobile_plugin("interface_name", ())
             .map_err(|error| map_plugin_error(error, VpnError::InterfaceUnavailable))?;
         Ok(response.interface_name)
+    }
+
+    fn dns_upstreams(&self) -> Result<Vec<String>, VpnError> {
+        let response: DnsResponse = self
+            .0
+            .run_mobile_plugin("dns_servers", ())
+            .map_err(|error| map_plugin_error(error, VpnError::InterfaceUnavailable))?;
+        Ok(response.dns_servers)
     }
 
     fn wait_established(&self) -> bool {
@@ -214,6 +226,28 @@ mod tests {
     }
 
     #[test]
+    fn kotlin_plugin_reads_physical_dns_servers() {
+        let plugin = kotlin("MglarouteVpnPlugin.kt");
+        for required in [
+            "fun dns_servers",
+            "dnsServers",
+            "getLinkProperties",
+            ".dnsServers",
+            ".hostAddress",
+            "dns_unavailable",
+        ] {
+            assert!(
+                plugin.contains(required),
+                "Kotlin plugin must supply physical DNS literals: missing {required}"
+            );
+        }
+        assert!(
+            plugin.contains("private fun interfaceName()"),
+            "plugin must keep the physical interface helper"
+        );
+    }
+
+    #[test]
     fn mobile_backend_uses_tauri_plugin_bridge() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/platform/vpn/mobile.rs");
         let text = std::fs::read_to_string(path).expect("mobile.rs must exist");
@@ -225,9 +259,11 @@ mod tests {
             "impl VpnBackend for MglarouteVpnBackend",
             "run_mobile_plugin",
             "mglaroute-vpn",
-            "CommandError::VpnPermissionRequired",
-            "CommandError::VpnInterfaceUnavailable",
+            "map_to_command_error",
             "tun-established",
+            "dns_servers",
+            "dns_upstreams",
+            "dns_unavailable",
         ] {
             assert!(
                 implementation.contains(required),

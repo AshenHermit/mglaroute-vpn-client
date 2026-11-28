@@ -157,6 +157,24 @@ class MglarouteVpnPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve(response)
     }
 
+    /** Physical-network DNS servers as IP literals; never the virtual VPN DNS. */
+    @Command
+    fun dns_servers(invoke: Invoke) {
+        val manager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val servers = manager?.let {
+            it.getLinkProperties(it.activeNetwork)?.dnsServers?.mapNotNull { address ->
+                address.hostAddress
+            }
+        }.orEmpty().filter { it.isNotBlank() }
+        if (servers.isEmpty()) {
+            invoke.reject("DNS servers are unavailable", "dns_unavailable")
+            return
+        }
+        val response = JSObject()
+        response.put("dnsServers", servers)
+        invoke.resolve(response)
+    }
+
     private fun completeStart(invoke: Invoke, service: MglarouteVpnService, args: VpnStartArgs) {
         val fd = service.startSession(args)
         if (fd == null) {
