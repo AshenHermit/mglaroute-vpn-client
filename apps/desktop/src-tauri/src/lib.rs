@@ -93,7 +93,8 @@ pub fn run() {
     trace_startup_phase(started, "runtime-ready");
 
     #[cfg(mobile)]
-    let vpn_plugin = tauri::plugin::Builder::new(platform::vpn::mobile::VPN_PLUGIN_NAME)
+    let vpn_plugin =
+        tauri::plugin::Builder::<tauri::Wry, ()>::new(platform::vpn::mobile::VPN_PLUGIN_NAME)
         .setup(|app, api| {
             #[cfg(target_os = "android")]
             {
