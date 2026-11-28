@@ -62,6 +62,7 @@ command_list!(
     connection_status,
     connection_connect,
     connection_disconnect,
+    platform_info,
     anti_dpi_status,
     anti_dpi_start,
     anti_dpi_stop,

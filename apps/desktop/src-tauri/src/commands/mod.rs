@@ -609,6 +609,22 @@ fn remove_config(path: &Option<PathBuf>) {
     }
 }
 
+/// Runtime platform flag for the frontend. No state, no arguments, no secrets;
+/// derived from the compile-time Tauri `mobile` cfg so mobile builds hide
+/// desktop-only surfaces (updater, anti-DPI actions).
+#[tauri::command]
+pub fn platform_info() -> PlatformInfoPayload {
+    PlatformInfoPayload {
+        mobile: cfg!(mobile),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformInfoPayload {
+    pub mobile: bool,
+}
+
 #[tauri::command]
 pub fn anti_dpi_status() -> AntiDpiStatus {
     crate::anti_dpi::status()
@@ -906,6 +922,15 @@ mod tests {
     }
 
     #[test]
+    fn platform_info_payload_has_only_mobile_flag() {
+        let payload = platform_info();
+        assert_eq!(
+            serde_json::to_value(&payload).expect("serialize platform info"),
+            json!({ "mobile": cfg!(mobile) })
+        );
+    }
+
+    #[test]
     fn vpn_command_errors_are_generic_and_snake_case() {
         assert_eq!(
             serde_json::to_value(CommandError::VpnPermissionRequired)
@@ -1120,6 +1145,7 @@ mod tests {
                 "connection_connect",
                 "connection_disconnect",
                 "connection_status",
+                "platform_info",
                 "probe_cancel",
                 "probe_run",
                 "profile_list",

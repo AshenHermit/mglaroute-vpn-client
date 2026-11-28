@@ -38,12 +38,23 @@ const settingsTabsVisible = () =>
     Boolean(screen.queryByRole("tab", { name })),
   );
 
+const desktopTabsVisible = () =>
+  ["Subscriptions", "Service profiles", "Routing", "Settings"].every((name) =>
+    Boolean(screen.queryByRole("tab", { name })),
+  );
+
+const openSettings = () => {
+  render(<AppShell />);
+  fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+};
+
 describe("Settings page navigation", () => {
   afterEach(cleanup);
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockedInvoke.mockImplementation(async (command) => {
+      if (command === "platform_info") return { mobile: false } as never;
       if (command === "subscription_list") return [] as never;
       if (command === "profile_list") return [] as never;
       if (command === "anti_dpi_status") return { status: "unsupported" } as never;
@@ -99,5 +110,40 @@ describe("Settings page navigation", () => {
 
     expect(screen.getByTestId("servers-marker")).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Subscriptions" })).toBeNull();
+  });
+
+  it("keeps the Updates tab and UpdatePanel on desktop", async () => {
+    openSettings();
+
+    expect(await screen.findByRole("tab", { name: "Updates" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
+    expect(screen.getByTestId("update-panel")).toBeTruthy();
+    expect(
+      mockedInvoke.mock.calls.filter(([command]) => command === "platform_info"),
+    ).toHaveLength(1);
+    expect(
+      mockedInvoke.mock.calls.filter(([command]) => command === "anti_dpi_status"),
+    ).toHaveLength(1);
+  });
+
+  it("hides the Updates tab and UpdatePanel on mobile", async () => {
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "platform_info") return { mobile: true } as never;
+      if (command === "subscription_list") return [] as never;
+      if (command === "profile_list") return [] as never;
+      if (command === "anti_dpi_status") return { status: "unsupported" } as never;
+      return undefined as never;
+    });
+
+    openSettings();
+
+    expect(desktopTabsVisible()).toBe(true);
+    expect(await screen.findByTestId("anti-dpi-status")).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Updates" })).toBeNull();
+    expect(screen.queryByTestId("update-panel")).toBeNull();
+    expect(screen.queryByRole("button", { name: /anti-dpi/i })).toBeNull();
+    expect(
+      mockedInvoke.mock.calls.filter(([command]) => command === "platform_info"),
+    ).toHaveLength(1);
   });
 });
