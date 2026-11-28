@@ -237,6 +237,30 @@ mod tests {
     }
 
     #[test]
+    fn android_build_task_resolves_node_portably() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/gen/android/buildSrc/src/main/java/com/mglaroute/client/kotlin/BuildTask.kt"
+        );
+        let text = std::fs::read_to_string(path).expect("BuildTask.kt must exist");
+        assert!(
+            !text.contains(r"C:\Program Files\nodejs"),
+            "generated build task must not pin a developer machine Node path"
+        );
+        for required in [
+            "System.getenv(\"NODE\")",
+            "node.exe",
+            "\"node\"",
+            "Os.isFamily(Os.FAMILY_WINDOWS)",
+        ] {
+            assert!(
+                text.contains(required),
+                "BuildTask.kt must resolve Node portably: missing {required}"
+            );
+        }
+    }
+
+    #[test]
     fn android_fd_handoff_clears_cloexec_before_exec() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/core/supervisor.rs");
         let text = std::fs::read_to_string(path).expect("core/supervisor.rs must exist");

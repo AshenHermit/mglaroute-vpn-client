@@ -21,34 +21,20 @@ abstract class BuildTask : DefaultTask() {
     @Input
     var release: Boolean? = null
 
+    /** Resolve the Node executable without pinning a developer machine path. */
+    private fun nodeExecutable(): String {
+        val fromEnv = System.getenv("NODE")
+        if (!fromEnv.isNullOrBlank()) {
+            return fromEnv
+        }
+        return if (Os.isFamily(Os.FAMILY_WINDOWS)) "node.exe" else "node"
+    }
+
     @TaskAction
     fun assemble() {
-        val executable = """C:\Program Files\nodejs\node""";
-        try {
-            runTauriCli(executable)
-        } catch (e: Exception) {
-            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                // Try different Windows-specific extensions
-                val fallbacks = listOf(
-                    "$executable.exe",
-                    "$executable.cmd",
-                    "$executable.bat",
-                )
-
-                var lastException: Exception = e
-                for (fallback in fallbacks) {
-                    try {
-                        runTauriCli(fallback)
-                        return
-                    } catch (fallbackException: Exception) {
-                        lastException = fallbackException
-                    }
-                }
-                throw lastException
-            } else {
-                throw e;
-            }
-        }
+        // Gradle's ExecOperations resolves the command through PATH; no
+        // extension guessing or absolute machine-specific path is needed.
+        runTauriCli(nodeExecutable())
     }
 
     fun runTauriCli(executable: String) {
